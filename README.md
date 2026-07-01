@@ -30,7 +30,7 @@ The plugin does not write long-term memory and does not write `project-memory`.
 Clone this repository, then add it as a local marketplace entry or install it through the Codex plugin UI.
 
 ```powershell
-git clone https://github.com/<github-user>/codex-rule-system.git F:\GitlabProjects\codex-rule-system
+git clone https://github.com/doudouHubs/codex-rule-system.git F:\GitlabProjects\codex-rule-system
 ```
 
 For a local marketplace using the standard `./plugins/<name>` convention, place this repository under `plugins/rule-system`, then create the marketplace file at the marketplace root:
