@@ -1,0 +1,7 @@
+interface:
+  display_name: "Project Rule Delete"
+  short_description: "Deprecate or hard-delete a project rule."
+  default_prompt: "Use $project-rule-delete to deprecate a project-shared rule by id, or hard-delete only when explicitly requested."
+
+policy:
+  allow_implicit_invocation: false

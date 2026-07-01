@@ -1,0 +1,7 @@
+interface:
+  display_name: "Project Rule Add"
+  short_description: "Add a reusable project-shared rule."
+  default_prompt: "Use $project-rule-add to save a stable project-level rule into the project rule library without adding it to long-term memory."
+
+policy:
+  allow_implicit_invocation: false

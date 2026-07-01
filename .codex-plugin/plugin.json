@@ -1,0 +1,35 @@
+{
+  "name": "rule-system",
+  "version": "0.1.0",
+  "description": "Session-scoped and project-shared rule capture, CRUD, and pick workflows for Codex projects.",
+  "author": {
+    "name": "X1"
+  },
+  "homepage": "https://github.com/<github-user>/codex-rule-system",
+  "repository": "https://github.com/<github-user>/codex-rule-system",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "plugin",
+    "rules",
+    "session-rules",
+    "project-rules"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Rule System",
+    "shortDescription": "Manage session and project-shared rules.",
+    "longDescription": "Rule System packages session-rule CRUD, project-shared rule libraries, rule picking, display policy, and context capture without mixing rules into long-term memory.",
+    "developerName": "X1",
+    "category": "Productivity",
+    "capabilities": [
+      "Write",
+      "Productivity"
+    ],
+    "defaultPrompt": [
+      "Manage current-session rules without long-term memory.",
+      "Pick shared project rules into this session.",
+      "Capture explicit requirements as atomic rules."
+    ]
+  }
+}

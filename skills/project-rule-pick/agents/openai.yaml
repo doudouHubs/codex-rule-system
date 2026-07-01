@@ -1,0 +1,7 @@
+interface:
+  display_name: "Project Rule Pick"
+  short_description: "Pick project rules into this session."
+  default_prompt: "Use $project-rule-pick to copy selected active project-shared rules into the current session rule context by id, tag, or keyword."
+
+policy:
+  allow_implicit_invocation: false

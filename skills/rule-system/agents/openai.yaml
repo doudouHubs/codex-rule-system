@@ -1,0 +1,7 @@
+interface:
+  display_name: "Rule System"
+  short_description: "Explain rule-system routing and boundaries."
+  default_prompt: "Use $rule-system to explain the Rule System plugin boundaries, route rule-related work to the right skill, and keep detailed rule behavior out of the global prompt."
+
+policy:
+  allow_implicit_invocation: false

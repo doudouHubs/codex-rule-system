@@ -1,0 +1,7 @@
+interface:
+  display_name: "Rule Display"
+  short_description: "Decide when to show session rule summaries."
+  default_prompt: "Use $rule-display at the end of replies to decide whether to show the full current-session rule list, a lightweight summary, or no rule section."
+
+policy:
+  allow_implicit_invocation: false

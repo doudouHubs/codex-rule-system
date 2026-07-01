@@ -1,0 +1,7 @@
+interface:
+  display_name: "Rule Add"
+  short_description: "Add a rule to the current project session store."
+  default_prompt: "Use $rule-add to normalize and append one active rule into the current project's current-session rule store, then immediately resume the interrupted original task; in Plan Mode, confirmed rule writes must not stop at the receipt."
+
+policy:
+  allow_implicit_invocation: false

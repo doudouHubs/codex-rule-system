@@ -1,0 +1,7 @@
+interface:
+  display_name: "Rule Delete"
+  short_description: "Delete a rule from the current project session store."
+  default_prompt: "Use $rule-delete to remove one rule from the current project's current-session rule store."
+
+policy:
+  allow_implicit_invocation: false
