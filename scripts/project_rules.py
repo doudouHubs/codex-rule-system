@@ -8,7 +8,9 @@ import datetime as dt
 import importlib.util
 import json
 import re
+import subprocess
 import sys
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,11 @@ import yaml
 ACTIVE_STATUS = "active"
 DEPRECATED_STATUS = "deprecated"
 VALID_STATUSES = {ACTIVE_STATUS, DEPRECATED_STATUS}
+PICKER_RELATIVE_PATHS = (
+    Path("bin") / "rule-picker-win.exe",
+    Path("tools") / "rule-picker-win" / "target" / "release" / "rule-picker-win.exe",
+    Path("tools") / "rule-picker-win" / "target" / "debug" / "rule-picker-win.exe",
+)
 
 
 def now_iso() -> str:
@@ -307,22 +314,36 @@ def resolve_project_context(args: argparse.Namespace) -> tuple[Any, Path, dict[s
     return session_rules, project_root, paths
 
 
-def cmd_add(args: argparse.Namespace) -> int:
-    """新增项目共享规则。"""
+def add_project_rule(
+    *,
+    project_root: Path,
+    title: str,
+    content: str,
+    tags: str | list[str] | None = None,
+) -> dict[str, Any]:
+    """
+    新增项目共享规则并返回统一 payload。
 
-    if not args.title.strip() or not args.content.strip():
-        print("title and content are required", file=sys.stderr)
-        return 1
-    _, _, paths = resolve_project_context(args)
+    该函数是项目规则“新增”的唯一实现 owner。`session_rules.py --scope project`
+    和旧 `project_rules.py add` 都必须走这里，避免两个入口各自维护字段和写入语义。
+    """
+
+    normalized_title = title.strip()
+    normalized_content = content.strip()
+    if not normalized_title or not normalized_content:
+        raise ValueError("title and content are required")
+
+    paths = resolve_paths(project_root)
+    ensure_storage(paths)
     rules = load_rules(paths)
     existing_ids = {rule["id"] for rule in rules}
     timestamp = now_iso()
     changed_rule = {
         "id": generate_rule_id(existing_ids),
-        "title": args.title.strip(),
-        "content": args.content.strip(),
+        "title": normalized_title,
+        "content": normalized_content,
         "status": ACTIVE_STATUS,
-        "tags": normalize_tags(args.tags),
+        "tags": normalize_tags(tags),
         "created_at": timestamp,
         "updated_at": timestamp,
         "picked_count": 0,
@@ -330,7 +351,24 @@ def cmd_add(args: argparse.Namespace) -> int:
     }
     rules.append(changed_rule)
     save_rules(paths, rules)
-    payload = build_payload(action="add", paths=paths, rules=rules, changed_rule=changed_rule, message="project rule added")
+    return build_payload(action="add", paths=paths, rules=rules, changed_rule=changed_rule, message="project rule added")
+
+
+def cmd_add(args: argparse.Namespace) -> int:
+    """兼容旧 CLI：项目规则新增转发到共享新增 owner。"""
+
+    session_rules = load_session_rules_module()
+    project_root = Path(args.project_root).resolve() if args.project_root else session_rules.detect_project_root(Path.cwd())
+    try:
+        payload = add_project_rule(
+            project_root=project_root,
+            title=args.title,
+            content=args.content,
+            tags=args.tags,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     print_result(payload, args.json)
     return 0
 
@@ -445,17 +483,106 @@ def add_entries_to_session(session_rules: Any, project_root: Path, session_id: s
     )
 
 
-def cmd_pick(args: argparse.Namespace) -> int:
-    """拾取项目规则快照进入当前会话规则。"""
+def plugin_root() -> Path:
+    """返回插件仓库根目录，供脚本从源码树或 Codex cache 中定位内置工具。"""
 
-    session_rules, project_root, paths = resolve_project_context(args)
-    rules = load_rules(paths)
-    ids = split_csv(args.ids)
-    selected = filter_rules(rules, include_all=False, tag=args.tag, query=args.query, ids=ids)
+    return Path(__file__).resolve().parent.parent
+
+
+def resolve_picker_executable() -> Path:
+    """定位 Windows 原生 picker。
+
+    优先使用随插件发布的 `bin/rule-picker-win.exe`；开发态没有复制 exe 时，
+    允许直接使用 Rust crate 的 debug/release 产物，方便本地迭代。
+    """
+
+    root = plugin_root()
+    for relative_path in PICKER_RELATIVE_PATHS:
+        candidate = root / relative_path
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(
+        "rule picker executable not found; build tools/rule-picker-win or place bin/rule-picker-win.exe"
+    )
+
+
+def build_picker_rules(selected_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """把项目规则压成 picker 需要的最小 JSON，避免 UI 工具依赖 YAML 结构。"""
+
+    return [
+        {
+            "id": rule["id"],
+            "title": rule["title"],
+            "content": rule["content"],
+            "tags": rule["tags"],
+        }
+        for rule in selected_rules
+    ]
+
+
+def run_picker(selected_rules: list[dict[str, Any]], query: str) -> list[str] | None:
+    """启动 Win32 picker 并返回用户确认的项目规则 ID。
+
+    返回 `None` 表示用户取消；返回空列表表示用户确认但未选择任何规则。
+    这里用临时 JSON 文件作为进程边界，避免命令行长度、转义和中文编码翻车。
+    """
+
+    picker = resolve_picker_executable()
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
+        json.dump(build_picker_rules(selected_rules), handle, ensure_ascii=False)
+        rules_file = Path(handle.name)
+    try:
+        command = [str(picker), "--rules", str(rules_file)]
+        if query.strip():
+            command.extend(["--query", query.strip()])
+        completed = subprocess.run(command, check=False, capture_output=True, text=True, encoding="utf-8")
+    finally:
+        try:
+            rules_file.unlink()
+        except OSError:
+            pass
+
+    if completed.returncode != 0:
+        message = completed.stderr.strip() or completed.stdout.strip() or "rule picker failed"
+        raise RuntimeError(message)
+    try:
+        payload = json.loads(completed.stdout.strip() or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"rule picker returned invalid JSON: {exc}") from exc
+    if bool(payload.get("cancelled", False)):
+        return None
+    selected_ids = payload.get("selected_ids", [])
+    if not isinstance(selected_ids, list):
+        raise RuntimeError("rule picker returned invalid selected_ids")
+    return [str(item).strip() for item in selected_ids if str(item).strip()]
+
+
+def pick_project_rules(
+    *,
+    session_rules: Any,
+    project_root: Path,
+    paths: dict[str, Path],
+    rules: list[dict[str, Any]],
+    selected: list[dict[str, Any]],
+    session_id_raw: str,
+) -> dict[str, Any]:
+    """把已确定的项目规则集合复制进当前会话。
+
+    CLI、tag/query 和 Win32 UI 都走这个函数，保证“快照复制、去重、统计回写”
+    只有一个 owner，不因为新增交互方式扩散出第二套 pick 逻辑。
+    """
+
     if not selected:
-        print("no active project rules matched", file=sys.stderr)
-        return 1
-    session_id = session_rules.resolve_session_id(args.session_id)
+        return build_payload(
+            action="pick",
+            paths=paths,
+            rules=rules,
+            selected_rules=[],
+            message="no active project rules matched",
+            session_payload=None,
+        )
+
+    session_id = session_rules.resolve_session_id(session_id_raw)
     existing_contents = existing_session_contents(session_rules, project_root, session_id)
     entries: list[dict[str, str]] = []
     picked_project_ids: set[str] = set()
@@ -483,6 +610,52 @@ def cmd_pick(args: argparse.Namespace) -> int:
         selected_rules=selected,
         message="project rules picked into current session" if entries else "matched project rules already exist in current session",
         session_payload=session_payload,
+    )
+    return payload
+
+
+def cmd_pick(args: argparse.Namespace) -> int:
+    """拾取项目规则快照进入当前会话规则。"""
+
+    session_rules, project_root, paths = resolve_project_context(args)
+    rules = load_rules(paths)
+    ids = split_csv(args.ids)
+    selected = filter_rules(rules, include_all=False, tag=args.tag, query=args.query, ids=ids)
+    if args.ui:
+        if sys.platform != "win32":
+            print("--ui is only supported on Windows", file=sys.stderr)
+            return 1
+        if not selected:
+            print("no active project rules matched", file=sys.stderr)
+            return 1
+        try:
+            selected_ids = run_picker(selected, args.query)
+        except (FileNotFoundError, RuntimeError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        if selected_ids is None:
+            payload = build_payload(
+                action="pick-ui-cancel",
+                paths=paths,
+                rules=rules,
+                selected_rules=[],
+                message="rule picker cancelled",
+                session_payload=None,
+            )
+            print_result(payload, args.json)
+            return 0
+        allowed_ids = {rule["id"] for rule in selected}
+        selected = [rule for rule in selected if rule["id"] in allowed_ids.intersection(selected_ids)]
+    if not selected:
+        print("no active project rules matched", file=sys.stderr)
+        return 1
+    payload = pick_project_rules(
+        session_rules=session_rules,
+        project_root=project_root,
+        paths=paths,
+        rules=rules,
+        selected=selected,
+        session_id_raw=args.session_id,
     )
     print_result(payload, args.json)
     return 0
@@ -531,6 +704,7 @@ def build_parser() -> argparse.ArgumentParser:
     pick_parser.add_argument("--ids", default="", help="Comma-separated project rule ids")
     pick_parser.add_argument("--tag", default="", help="Pick active rules by tag")
     pick_parser.add_argument("--query", default="", help="Pick active rules by keyword")
+    pick_parser.add_argument("--ui", action="store_true", help="Open the native Windows picker before copying rules")
     pick_parser.add_argument("--project-root", default="", help="Optional explicit project root")
     pick_parser.add_argument("--session-id", default="", help="Optional explicit session id")
     pick_parser.add_argument("--json", action="store_true", help="Output JSON")

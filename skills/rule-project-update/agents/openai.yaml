@@ -1,0 +1,7 @@
+interface:
+  display_name: "Rule Project Update"
+  short_description: "Update a project-shared rule by id."
+  default_prompt: "Use $rule-project-update to modify a project-shared rule's title, content, tags, or status by id."
+
+policy:
+  allow_implicit_invocation: false

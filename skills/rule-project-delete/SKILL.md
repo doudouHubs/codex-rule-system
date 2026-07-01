@@ -1,13 +1,13 @@
 ---
-name: project-rule-delete
+name: rule-project-delete
 description: Use when the user wants to deprecate one project-shared rule by id, or explicitly hard-delete it from the project rule library.
 ---
 
-# Project Rule Delete
+# Rule Project Delete
 
 ## Overview
 
-`$project-rule-delete` 删除项目共享规则。
+`$rule-project-delete` 删除项目共享规则。
 
 默认是软删除：把 `status` 改成 `deprecated`。只有用户明确要求硬删除时才使用 `--hard` 物理删除。
 
@@ -15,7 +15,7 @@ description: Use when the user wants to deprecate one project-shared rule by id,
 
 ```powershell
 # 将 $skillRoot 设置为当前 SKILL.md 所在目录；从脚本文件执行时可用 $PSScriptRoot。
-$skillRoot = "C:\path\to\rule-system\skills\project-rule-delete"
+$skillRoot = "C:\path\to\rule-system\skills\rule-project-delete"
 $pluginRoot = Resolve-Path (Join-Path $skillRoot "..\..")
 $script = Join-Path $pluginRoot "scripts/project_rules.py"
 

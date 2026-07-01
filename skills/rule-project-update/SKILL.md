@@ -1,13 +1,13 @@
 ---
-name: project-rule-update
+name: rule-project-update
 description: Use when the user wants to modify an existing project-shared rule by id, including title, content, tags, or active/deprecated status.
 ---
 
-# Project Rule Update
+# Rule Project Update
 
 ## Overview
 
-`$project-rule-update` 按 `id` 更新当前项目规则库中的共享规则。
+`$rule-project-update` 按 `id` 更新当前项目规则库中的共享规则。
 
 已被某个会话 pick 过的规则不会被追溯修改；pick 进入会话的是当时的规则快照。
 
@@ -15,7 +15,7 @@ description: Use when the user wants to modify an existing project-shared rule b
 
 ```powershell
 # 将 $skillRoot 设置为当前 SKILL.md 所在目录；从脚本文件执行时可用 $PSScriptRoot。
-$skillRoot = "C:\path\to\rule-system\skills\project-rule-update"
+$skillRoot = "C:\path\to\rule-system\skills\rule-project-update"
 $pluginRoot = Resolve-Path (Join-Path $skillRoot "..\..")
 $script = Join-Path $pluginRoot "scripts/project_rules.py"
 

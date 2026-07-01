@@ -10,10 +10,12 @@ It provides two layers:
 ## Capabilities
 
 - `$rule-add`, `$rule-update`, `$rule-delete`, `$rule-list`: CRUD for current-session rules.
+- `$rule-add --scope project`: add stable project-shared rules through the canonical add entry.
 - `$rule-capture`: extract atomic rule candidates from recent conversation context.
 - `$rule-display`: decide whether to print full rules or a short summary.
-- `$project-rule-add`, `$project-rule-update`, `$project-rule-delete`, `$project-rule-list`: CRUD for project-shared rules.
-- `$project-rule-pick`: copy selected project rules into the current session as snapshots.
+- `$rule-project-add`: legacy guidance entry that forwards project-rule creation to `$rule-add --scope project`.
+- `$rule-project-update`, `$rule-project-delete`, `$rule-project-list`: lifecycle operations for project-shared rules.
+- `$rule-project-pick`: copy selected project rules into the current session as snapshots, with an optional Windows native picker.
 - `$rule-system`: explain routing, boundaries, and global-prompt migration guidance.
 
 ## Storage Model
@@ -69,7 +71,9 @@ Ask Codex for rule operations naturally:
 ```text
 把这条要求收集成规则：每次修改共享层前先说明影响范围。
 查看当前会话规则。
+把这条项目级规则加入项目规则库：命令和路径使用反引号包裹。
 把项目规则库里和输出格式相关的规则拾取到当前会话。
+打开规则选择窗口，从项目规则库里手动搜索并拾取规则。
 ```
 
 The action skills include command examples. Those examples intentionally resolve script paths relative to each skill's `SKILL.md` source locator, so the plugin works from a local repository, a Codex cache directory, or a GitHub-installed plugin.
@@ -78,6 +82,8 @@ The action skills include command examples. Those examples intentionally resolve
 
 ```powershell
 python -m py_compile scripts/session_rules.py scripts/project_rules.py skills/rule-capture/scripts/rule_capture.py
+cargo check --manifest-path tools/rule-picker-win/Cargo.toml
+.\scripts\build-rule-picker.ps1
 python <path-to-plugin-creator>\scripts\validate_plugin.py .
 ```
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import importlib.util
 import json
 import os
 import re
@@ -19,6 +20,9 @@ import yaml
 # 统一允许的会话环境变量优先级。
 # 先吃 Codex 原生线程 ID；拿不到时再降级到终端会话标识，避免每次都生成新目录。
 SESSION_ENV_KEYS = ("CODEX_THREAD_ID", "WT_SESSION", "SESSIONNAME")
+SESSION_SCOPE = "session"
+PROJECT_SCOPE = "project"
+VALID_ADD_SCOPES = {SESSION_SCOPE, PROJECT_SCOPE}
 
 
 def now_iso() -> str:
@@ -318,6 +322,18 @@ def build_payload(
     }
 
 
+def load_project_rules_module() -> Any:
+    """按需加载项目规则模块，让 `rule-add --scope project` 复用唯一项目新增 owner。"""
+
+    module_path = Path(__file__).resolve().with_name("project_rules.py")
+    spec = importlib.util.spec_from_file_location("project_rules_shared", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load project rules module: {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def print_result(payload: dict[str, Any], json_mode: bool) -> None:
     """同时支持 JSON 和人类可读输出，方便 skill 指令和人工排查共用。"""
 
@@ -347,7 +363,7 @@ def find_rule_index(rules: list[dict[str, Any]], rule_id: str) -> int:
     return -1
 
 
-def cmd_add(args: argparse.Namespace) -> int:
+def cmd_add_session(args: argparse.Namespace) -> int:
     """新增一条或多条会话规则。"""
 
     try:
@@ -390,6 +406,45 @@ def cmd_add(args: argparse.Namespace) -> int:
     )
     print_result(payload, args.json)
     return 0
+
+
+def cmd_add_project(args: argparse.Namespace) -> int:
+    """新增项目共享规则，作为 `$rule-add --scope project` 的实现入口。"""
+
+    if "；" in args.title or "；" in args.content:
+        print("project-scope add does not support Chinese semicolon batch mode", file=sys.stderr)
+        return 1
+
+    project_root = Path(args.project_root).resolve() if args.project_root else detect_project_root(Path.cwd())
+    project_rules = load_project_rules_module()
+    try:
+        payload = project_rules.add_project_rule(
+            project_root=project_root,
+            title=args.title,
+            content=args.content,
+            tags=args.tags,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    project_rules.print_result(payload, args.json)
+    return 0
+
+
+def cmd_add(args: argparse.Namespace) -> int:
+    """
+    统一新增入口。
+
+    `session` 保留旧 `$rule-add` 行为；`project` 复用项目规则新增 owner。
+    这么做是为了收敛“新增规则”的路由，同时不破坏项目规则独立生命周期字段。
+    """
+
+    if args.scope == SESSION_SCOPE:
+        return cmd_add_session(args)
+    if args.scope == PROJECT_SCOPE:
+        return cmd_add_project(args)
+    print(f"scope must be one of: {', '.join(sorted(VALID_ADD_SCOPES))}", file=sys.stderr)
+    return 1
 
 
 def cmd_update(args: argparse.Namespace) -> int:
@@ -524,9 +579,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    add_parser = subparsers.add_parser("add", help="Add one session rule")
+    add_parser = subparsers.add_parser("add", help="Add one rule; defaults to current-session scope")
+    add_parser.add_argument(
+        "--scope",
+        choices=sorted(VALID_ADD_SCOPES),
+        default=SESSION_SCOPE,
+        help="Rule target scope: session for current conversation, project for shared project library",
+    )
     add_parser.add_argument("--title", required=True, help="Rule title")
     add_parser.add_argument("--content", required=True, help="Rule content")
+    add_parser.add_argument("--tags", default="", help="Comma-separated tags for project-scope rules")
     add_parser.add_argument("--project-root", default="", help="Optional explicit project root")
     add_parser.add_argument("--session-id", default="", help="Optional explicit session id")
     add_parser.add_argument("--json", action="store_true", help="Output JSON instead of human-readable text")

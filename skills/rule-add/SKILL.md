@@ -1,15 +1,20 @@
 ---
 name: rule-add
-description: Use when the user wants to manually add one active rule into the current project's current-session rule store under `.codex/session-rules/session-id/`, so later replies can summarize or fully print the session rules without mixing them into long-term memory.
+description: Use when the user wants to add one active rule into either the current-session rule store or the project-shared rule library without mixing rules into long-term memory.
 ---
 
 # Rule Add
 
 ## Overview
 
-`$rule-add` 用于把一条或多条规则写入“当前项目 + 当前会话”的规则目录。
+`$rule-add` 是“新增规则”的唯一 canonical owner，用于把规则写入当前会话或项目共享规则库。
 
-它只管理项目内 `.codex/session-rules/<session_id>/rules.yaml`，不写长期记忆，也不写 `project-memory`。
+作用域由 `--scope` 控制：
+
+- `scope=session`：默认值，写入 `.codex/session-rules/<session_id>/rules.yaml`。
+- `scope=project`：写入 `.codex/project-rules/rules.yaml`，供后续会话搜索并显式 pick。
+
+它不写长期记忆，也不写 `project-memory`。
 
 它的职责不只是“落盘”，还要先把用户表达整理成可执行规则；别把用户原话一股脑塞进规则仓库。
 
@@ -20,10 +25,12 @@ description: Use when the user wants to manually add one active rule into the cu
 3. 先把用户输入整理成清晰、单义、可执行的规则文案，再决定是否写入。
 4. 若当前处于 Plan Mode，先判断是否存在关键信息缺口；有缺口时，用交互方式只追问 1-3 个必要问题，等用户确认整理后的规则文本后再写入。
 5. 若当前不处于 Plan Mode，则直接根据上下文重组用户表达，生成更准确的 `title` 与 `content`，不要原样照抄含糊措辞。
-6. 初始化 `<project_root>/.codex/session-rules/<session_id>/rules.yaml` 与 `meta.yaml`。
-7. 追加一条或多条规则，字段固定为：`id`、`title`、`content`、`created_at`、`updated_at`。
-8. 若 `--title` 和 `--content` 中出现中文分号 `；`，则进入批量模式，按位置一一配对写入多条规则。
-9. 成功后在回复结尾输出完整的“收集的规则列表”，并立即恢复被打断的原任务执行流；规则写入只是中间动作，不是终点。
+6. 判断规则作用域：临时、本轮、当前会话约束走 `scope=session`；稳定、跨会话复用、项目级约束走 `scope=project`。
+7. `scope=session` 初始化 `<project_root>/.codex/session-rules/<session_id>/rules.yaml` 与 `meta.yaml`，追加字段为：`id`、`title`、`content`、`created_at`、`updated_at`。
+8. `scope=project` 初始化 `<project_root>/.codex/project-rules/rules.yaml` 与 `meta.yaml`，追加字段为：`id`、`title`、`content`、`status`、`tags`、`created_at`、`updated_at`、`picked_count`、`last_picked_at`。
+9. `scope=session` 中若 `--title` 和 `--content` 出现中文分号 `；`，进入批量模式；`scope=project` 不支持批量模式，避免标签和状态语义被猜错。
+10. `scope=session` 成功后在回复结尾输出完整的“收集的规则列表”，并立即恢复被打断的原任务执行流；规则写入只是中间动作，不是终点。
+11. `scope=project` 成功后提示该规则只进入项目规则库；若希望当前会话立即使用，还需要显式 `$rule-project-pick`。
 
 ## Mode Handling
 
@@ -51,6 +58,9 @@ $script = Join-Path $pluginRoot "scripts/session_rules.py"
 # 默认：写入当前项目当前会话
 python $script add --title "范围约束" --content "只查原因，不改代码"
 
+# 项目级共享规则：稳定、跨会话复用的规则写入项目规则库
+python $script add --scope project --title "输出格式" --content "命令和路径使用反引号包裹" --tags "output,format"
+
 # 批量：标题和内容都用中文分号 `；` 对齐拆分
 python $script add --title "范围约束；输出格式；禁止项" --content "只查原因，不改代码；先给结论，再给证据；不要扩题"
 
@@ -66,6 +76,7 @@ python $script add --title "禁止项" --content "不要扩题" --json
 - 默认输出：
   - 一行总览：`当前项目当前会话规则共 N 条。`
   - 完整规则列表：每条仅显示 `content`，格式为 `- 规则内容`
+- `scope=project` 输出项目规则库摘要和包含 ID 的规则列表，便于后续 `$rule-project-pick/update/delete`。
 - 技能内要求：
   - 新增前，若做了改写或归一化，需在正文中先用一句话说明“按整理后的规则执行”
   - 新增成功后，回复正文说明新增结果
@@ -77,6 +88,7 @@ python $script add --title "禁止项" --content "不要扩题" --json
 
 - 不要把新增规则写进长期记忆或 `project-memory`。
 - 允许两种新增入口：显式调用 `$rule-add`，或由 `$rule-system` 路由在识别到会影响当前任务执行方式的规则信号时调用 `$rule-add`。
+- 所有 skill 名称必须使用 `rule-*` 前缀；项目规则相关 skill 使用 `$rule-project-*`。
 - `title` 和 `content` 必须非空。
 - 不要把未经整理的口语原话、情绪化措辞、或语义残缺的半句直接写入规则文件。
 - Plan Mode 下若需要确认，必须先确认后写入；确认通过后必须立即执行，不得延后。
@@ -84,6 +96,7 @@ python $script add --title "禁止项" --content "不要扩题" --json
 - 在 Plan Mode 中，规则写入成功后不得停在收集回执；必须恢复被打断的主任务执行流。
 - 非 Plan Mode 下即使不追问，也必须先做最小充分的语义重组，确保规则可执行、可验证。
 - 批量模式下，`title` 与 `content` 用中文分号 `；` 拆分后的数量必须一致；不一致时直接失败，不猜用户意思。
+- 批量模式只适用于 `scope=session`；项目规则新增若需要多条，应逐条调用，避免 tag/status 归属混乱。
 
 
 
