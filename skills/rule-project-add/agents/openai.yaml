@@ -1,7 +1,0 @@
-interface:
-  display_name: "Rule Project Add"
-  short_description: "Add a reusable project-shared rule."
-  default_prompt: "Use $rule-add --scope project to save a stable project-level rule into the project rule library without adding it to long-term memory."
-
-policy:
-  allow_implicit_invocation: false

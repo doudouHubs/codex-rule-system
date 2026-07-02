@@ -1,6 +1,6 @@
 ---
 name: rule-system
-description: Use when the user asks about the Rule System plugin, session-rule boundaries, project-shared rule libraries, how rule-add/rule-project-* skills relate, or wants global prompt rule-system guidance moved into plugin-managed instructions.
+description: Use when the user asks about the Rule System plugin, session-rule boundaries, project-shared rule libraries, how rule-add/rule-project skills relate, or wants global prompt rule-system guidance moved into plugin-managed instructions.
 ---
 
 # Rule System
@@ -16,8 +16,8 @@ description: Use when the user asks about the Rule System plugin, session-rule b
 - 会话规则只作用于当前项目当前会话，事实来源是 `<project_root>/.codex/session-rules/<session_id>/rules.yaml`。
 - 会话规则用于当前任务和当前会话内的需求更迭，不等同于长期记忆。
 - 项目规则库作用于当前项目内所有会话，事实来源是 `<project_root>/.codex/project-rules/rules.yaml`。
-- 项目规则库不会自动注入会话；必须通过 `$rule-project-pick` 显式拾取后，才进入当前会话规则。
-- `$rule-project-pick` 是快照复制，不是动态引用；项目规则后续修改不会悄悄改变已拾取的会话规则。
+- 项目规则库不会自动注入会话；必须通过 `$rule-project` 的 `pick` 操作显式拾取后，才进入当前会话规则。
+- `$rule-project` 的 `pick` 是快照复制，不是动态引用；项目规则后续修改不会悄悄改变已拾取的会话规则。
 - 长期记忆只记录稳定沟通偏好、身份偏好和跨项目复用的工作习惯；未确认前不要写入长期记忆。
 - `project-memory` 是项目工作流记忆层，不是当前会话规则仓库。
 - 规则系统不得把会话规则或项目规则自动提升为长期记忆或 `project-memory`。
@@ -31,10 +31,7 @@ description: Use when the user asks about the Rule System plugin, session-rule b
 - 用户要求查看当前规则：使用 `$rule-list`。
 - 用户要求从最近上下文分析可沉淀规则候选：使用 `$rule-capture`。
 - 需要决定本轮结尾是否展示完整规则或摘要：使用 `$rule-display`。
-- 用户要求查看、搜索项目规则库：使用 `$rule-project-list`。
-- 用户要求修改项目共享规则：使用 `$rule-project-update`。
-- 用户要求废弃或删除项目共享规则：使用 `$rule-project-delete`。
-- 用户要求把项目共享规则带入当前会话背景：使用 `$rule-project-pick`。
+- 用户要求查看、搜索、修改、废弃、删除项目规则库，或把项目共享规则带入当前会话背景：使用 `$rule-project`。
 
 ## Global Prompt Migration Policy
 
@@ -51,7 +48,7 @@ description: Use when the user asks about the Rule System plugin, session-rule b
 - `session-rules` 存储路径和字段细节
 - `project-rules` 存储路径和字段细节
 - rule CRUD 的操作流程和输出格式
-- rule-project CRUD 与 pick 的操作流程和输出格式
+- rule-project 聚合入口的 list/update/delete/pick 操作流程和输出格式
 - `rule-capture` 的候选提炼规则
 - 规则与长期记忆、`project-memory` 的边界
 - 规则变更后完整展示、非变更轮摘要展示、无规则不展示等策略

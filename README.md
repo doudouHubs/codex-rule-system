@@ -13,9 +13,7 @@ It provides two layers:
 - `$rule-add --scope project`: add stable project-shared rules through the canonical add entry.
 - `$rule-capture`: extract atomic rule candidates from recent conversation context.
 - `$rule-display`: decide whether to print full rules or a short summary.
-- `$rule-project-add`: legacy guidance entry that forwards project-rule creation to `$rule-add --scope project`.
-- `$rule-project-update`, `$rule-project-delete`, `$rule-project-list`: lifecycle operations for project-shared rules.
-- `$rule-project-pick`: copy selected project rules into the current session as snapshots, with an optional Windows native picker.
+- `$rule-project`: list, search, update, delete, or pick project-shared rules, with an optional Windows native picker for picking.
 - `$rule-system`: explain routing, boundaries, and global-prompt migration guidance.
 
 ## Storage Model

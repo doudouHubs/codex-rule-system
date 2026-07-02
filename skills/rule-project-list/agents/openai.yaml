@@ -1,7 +1,0 @@
-interface:
-  display_name: "Rule Project List"
-  short_description: "List or search project-shared rules."
-  default_prompt: "Use $rule-project-list to inspect active or deprecated project-shared rules by tag, keyword, or full list."
-
-policy:
-  allow_implicit_invocation: false

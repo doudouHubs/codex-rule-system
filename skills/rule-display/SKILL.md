@@ -13,7 +13,7 @@ description: Use at the end of a reply when current-session rules were added, up
 
 ## Display Rules
 
-1. 当 `$rule-add`、`$rule-update`、`$rule-delete` 或 `$rule-project-pick` 成功执行后，本轮回复结尾必须输出完整“收集的规则列表”。
+1. 当 `$rule-add`、`$rule-update`、`$rule-delete` 或 `$rule-project` pick 成功执行后，本轮回复结尾必须输出完整“收集的规则列表”。
 2. 完整列表只展示当前有效规则的 `content`，格式固定为：
 
 ```text

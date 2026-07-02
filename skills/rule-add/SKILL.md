@@ -30,7 +30,7 @@ description: Use when the user wants to add one active rule into either the curr
 8. `scope=project` 初始化 `<project_root>/.codex/project-rules/rules.yaml` 与 `meta.yaml`，追加字段为：`id`、`title`、`content`、`status`、`tags`、`created_at`、`updated_at`、`picked_count`、`last_picked_at`。
 9. `scope=session` 中若 `--title` 和 `--content` 出现中文分号 `；`，进入批量模式；`scope=project` 不支持批量模式，避免标签和状态语义被猜错。
 10. `scope=session` 成功后在回复结尾输出完整的“收集的规则列表”，并立即恢复被打断的原任务执行流；规则写入只是中间动作，不是终点。
-11. `scope=project` 成功后提示该规则只进入项目规则库；若希望当前会话立即使用，还需要显式 `$rule-project-pick`。
+11. `scope=project` 成功后提示该规则只进入项目规则库；若希望当前会话立即使用，还需要显式 `$rule-project` pick。
 
 ## Mode Handling
 
@@ -76,7 +76,7 @@ python $script add --title "禁止项" --content "不要扩题" --json
 - 默认输出：
   - 一行总览：`当前项目当前会话规则共 N 条。`
   - 完整规则列表：每条仅显示 `content`，格式为 `- 规则内容`
-- `scope=project` 输出项目规则库摘要和包含 ID 的规则列表，便于后续 `$rule-project-pick/update/delete`。
+- `scope=project` 输出项目规则库摘要和包含 ID 的规则列表，便于后续 `$rule-project` 操作。
 - 技能内要求：
   - 新增前，若做了改写或归一化，需在正文中先用一句话说明“按整理后的规则执行”
   - 新增成功后，回复正文说明新增结果
@@ -88,7 +88,7 @@ python $script add --title "禁止项" --content "不要扩题" --json
 
 - 不要把新增规则写进长期记忆或 `project-memory`。
 - 允许两种新增入口：显式调用 `$rule-add`，或由 `$rule-system` 路由在识别到会影响当前任务执行方式的规则信号时调用 `$rule-add`。
-- 所有 skill 名称必须使用 `rule-*` 前缀；项目规则相关 skill 使用 `$rule-project-*`。
+- 所有 skill 名称必须使用 `rule-*` 前缀；项目规则相关操作统一使用 `$rule-project`。
 - `title` 和 `content` 必须非空。
 - 不要把未经整理的口语原话、情绪化措辞、或语义残缺的半句直接写入规则文件。
 - Plan Mode 下若需要确认，必须先确认后写入；确认通过后必须立即执行，不得延后。
