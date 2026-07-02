@@ -1,7 +1,0 @@
-interface:
-  display_name: "Rule Capture"
-  short_description: "Extract atomic rule candidates from recent dialogue context."
-  default_prompt: "Use $rule-capture to extract atomic requirement-rule candidates from the recent conversation context, present evidence-backed candidates, and only write them into the current session rules after Plan Mode selector confirmation."
-
-policy:
-  allow_implicit_invocation: false

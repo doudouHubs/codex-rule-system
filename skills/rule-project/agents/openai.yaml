@@ -1,7 +1,0 @@
-interface:
-  display_name: "Rule Project"
-  short_description: "Manage project-shared rules."
-  default_prompt: "Use $rule-project to list, search, update, delete, or pick project-shared rules; use $rule-add --scope project for new project rules."
-
-policy:
-  allow_implicit_invocation: false

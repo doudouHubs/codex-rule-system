@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2
+
+- Removed per-skill `agents/openai.yaml` entries so each `rule-*` skill is exposed only once through `SKILL.md`.
+- Kept the 0.2.1 consolidated skill surface unchanged.
+
 ## 0.2.1
 
 - Consolidated project rule lifecycle skills into the single `$rule-project` skill to reduce duplicate-looking entries.
