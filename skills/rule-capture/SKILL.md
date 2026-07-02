@@ -1,9 +1,9 @@
 ---
 name: rule-capture
-description: Use when the user wants to analyze the recent conversation context, extract explicit or strongly implied requirement rules, split them into atomic one-constraint candidates, and confirm them in Plan Mode before writing into the current project's current-session rule store.
+description: Capture rules from recent conversation.
 ---
 
-# Rule Capture
+# rule-capture
 
 ## Overview
 

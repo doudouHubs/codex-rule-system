@@ -1,9 +1,9 @@
 ---
 name: rule-project
-description: Use when the user wants to list, search, update, deprecate, hard-delete, or pick project-shared rules into the current session.
+description: Manage project-shared rules.
 ---
 
-# Rule Project
+# rule-project
 
 ## Overview
 

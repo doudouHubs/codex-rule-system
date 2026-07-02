@@ -1,6 +1,6 @@
 {
   "name": "rule-system",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Session-scoped and project-shared rule capture, CRUD, and pick workflows for Codex projects.",
   "author": {
     "name": "X1"

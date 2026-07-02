@@ -1,9 +1,9 @@
 ---
 name: rule-system
-description: Use when the user asks about the Rule System plugin, session-rule boundaries, project-shared rule libraries, how rule-add/rule-project skills relate, or wants global prompt rule-system guidance moved into plugin-managed instructions.
+description: Explain rule-system boundaries.
 ---
 
-# Rule System
+# rule-system
 
 ## Overview
 

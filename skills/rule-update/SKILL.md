@@ -1,9 +1,9 @@
 ---
 name: rule-update
-description: Use when the user wants to manually modify one existing rule in the current project's current-session rule store under `.codex/session-rules/session-id/`, and expects the updated full rule list at the end of the reply.
+description: Update current-session rules.
 ---
 
-# Rule Update
+# rule-update
 
 ## Overview
 

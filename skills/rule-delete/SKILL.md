@@ -1,9 +1,9 @@
 ---
 name: rule-delete
-description: Use when the user wants to manually remove one rule from the current project's current-session rule store under `.codex/session-rules/session-id/`, or clear the whole current-session rule set, and expects the remaining full rule list after deletion.
+description: Delete current-session rules.
 ---
 
-# Rule Delete
+# rule-delete
 
 ## Overview
 

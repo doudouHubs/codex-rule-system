@@ -1,9 +1,9 @@
 ---
 name: rule-add
-description: Use when the user wants to add one active rule into either the current-session rule store or the project-shared rule library without mixing rules into long-term memory.
+description: Add a session or project rule.
 ---
 
-# Rule Add
+# rule-add
 
 ## Overview
 

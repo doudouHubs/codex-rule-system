@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.3
+
+- Shortened skill display titles to lowercase `rule-*` names.
+- Shortened skill descriptions for cleaner Codex App autocomplete entries.
+
 ## 0.2.2
 
 - Removed per-skill `agents/openai.yaml` entries so each `rule-*` skill is exposed only once through `SKILL.md`.

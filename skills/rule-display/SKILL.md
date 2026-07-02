@@ -1,9 +1,9 @@
 ---
 name: rule-display
-description: Use at the end of a reply when current-session rules were added, updated, deleted, cleared, project rules were picked, captured, or when existing current-session rules should be summarized without mixing them with project-shared rules or long-term memory.
+description: Display current-session rules.
 ---
 
-# Rule Display
+# rule-display
 
 ## Overview
 

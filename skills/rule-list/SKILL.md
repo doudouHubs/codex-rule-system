@@ -1,9 +1,9 @@
 ---
 name: rule-list
-description: Use when the user wants to inspect the current project's current-session rule store under `.codex/session-rules/session-id/`, either as a full list or as a lightweight count-and-title summary.
+description: List current-session rules.
 ---
 
-# Rule List
+# rule-list
 
 ## Overview
 
