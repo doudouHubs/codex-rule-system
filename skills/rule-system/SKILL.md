@@ -31,7 +31,7 @@ description: Explain rule-system boundaries.
 - 用户要求查看当前规则：使用 `$rule-list`。
 - 用户要求从最近上下文分析可沉淀规则候选：使用 `$rule-capture`。
 - 需要决定本轮结尾是否展示完整规则或摘要：使用 `$rule-display`。
-- 用户要求查看、搜索、修改、废弃、删除项目规则库，或把项目共享规则带入当前会话背景：使用 `$rule-check`。
+- 用户要求查看、搜索、编辑、废弃、删除项目规则库，或把项目共享规则带入当前会话背景：使用 `$rule-check`；需要人工检查时默认打开 UI。
 
 ## Global Prompt Migration Policy
 
@@ -48,7 +48,7 @@ description: Explain rule-system boundaries.
 - `session-rules` 存储路径和字段细节
 - `project-rules` 存储路径和字段细节
 - rule CRUD 的操作流程和输出格式
-- rule-check 聚合入口的 list/update/delete/pick 操作流程和输出格式
+- rule-check 聚合入口的 UI 检查/编辑/pick，以及 CLI list/update/delete/pick 操作流程和输出格式
 - `rule-capture` 的候选提炼规则
 - 规则与长期记忆、`project-memory` 的边界
 - 规则变更后完整展示、非变更轮摘要展示、无规则不展示等策略
@@ -58,5 +58,4 @@ description: Explain rule-system boundaries.
 - 不要在 `$rule-system` 里直接增删改查规则；调用对应动作 skill。
 - 不要把插件策略复制回全局提示词，除非只是保留一条路由句。
 - 不要让全局提示词和插件同时维护同一条细则，重复 owner 会导致漂移。
-
 

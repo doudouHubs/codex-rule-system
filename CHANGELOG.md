@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.5
+
+- Upgraded `$rule-check` UI into a Windows native check/edit/pick flow.
+- Added picker edit output support for project rule title, content, tags, and status.
+- Kept project rule YAML persistence inside `scripts/project_rules.py` as the single storage owner.
+- Ensured `pick --ui` still opens an empty-state window instead of failing silently when no active project rules match.
+
 ## 0.2.4
 
 - Renamed the project rule operation skill from `$rule-project` to `$rule-check`.

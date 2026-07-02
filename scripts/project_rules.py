@@ -514,16 +514,18 @@ def build_picker_rules(selected_rules: list[dict[str, Any]]) -> list[dict[str, A
             "id": rule["id"],
             "title": rule["title"],
             "content": rule["content"],
+            "status": rule["status"],
             "tags": rule["tags"],
         }
         for rule in selected_rules
     ]
 
 
-def run_picker(selected_rules: list[dict[str, Any]], query: str) -> list[str] | None:
-    """启动 Win32 picker 并返回用户确认的项目规则 ID。
+def run_picker(selected_rules: list[dict[str, Any]], query: str) -> dict[str, Any] | None:
+    """启动 Win32 picker 并返回用户确认的选择与编辑结果。
 
-    返回 `None` 表示用户取消；返回空列表表示用户确认但未选择任何规则。
+    返回 `None` 表示用户取消；返回 payload 表示用户确认。payload 中
+    `selected_ids` 用于 pick，`updates` 用于先保存 UI 内编辑过的项目规则。
     这里用临时 JSON 文件作为进程边界，避免命令行长度、转义和中文编码翻车。
     """
 
@@ -554,7 +556,65 @@ def run_picker(selected_rules: list[dict[str, Any]], query: str) -> list[str] | 
     selected_ids = payload.get("selected_ids", [])
     if not isinstance(selected_ids, list):
         raise RuntimeError("rule picker returned invalid selected_ids")
-    return [str(item).strip() for item in selected_ids if str(item).strip()]
+    updates = payload.get("updates", [])
+    if not isinstance(updates, list):
+        raise RuntimeError("rule picker returned invalid updates")
+    return {
+        "selected_ids": [str(item).strip() for item in selected_ids if str(item).strip()],
+        "updates": updates,
+    }
+
+
+def apply_picker_updates(
+    *,
+    paths: dict[str, Path],
+    rules: list[dict[str, Any]],
+    updates: list[Any],
+    allowed_ids: set[str],
+) -> list[dict[str, Any]]:
+    """保存 picker 内编辑过的项目规则。
+
+    Win32 picker 只负责交互，不直接写 YAML；这里统一做 ID 边界、字段校验、
+    时间戳刷新和落盘，避免 UI 工具变成第二个项目规则存储 owner。
+    """
+
+    changed_rules: list[dict[str, Any]] = []
+    if not updates:
+        return changed_rules
+
+    index_by_id = {rule["id"]: index for index, rule in enumerate(rules)}
+    timestamp = now_iso()
+    for raw_update in updates:
+        if not isinstance(raw_update, dict):
+            raise ValueError("rule picker returned invalid update item")
+        rule_id = str(raw_update.get("id", "")).strip()
+        if not rule_id:
+            raise ValueError("rule picker returned update without id")
+        if rule_id not in allowed_ids:
+            raise ValueError(f"rule picker returned update outside visible rule set: {rule_id}")
+        index = index_by_id.get(rule_id)
+        if index is None:
+            raise ValueError(f"project rule not found: {rule_id}")
+
+        title = str(raw_update.get("title", "")).strip()
+        content = str(raw_update.get("content", "")).strip()
+        status = str(raw_update.get("status", ACTIVE_STATUS)).strip() or ACTIVE_STATUS
+        if not title or not content:
+            raise ValueError("updated project rule title and content are required")
+        if status not in VALID_STATUSES:
+            raise ValueError(f"status must be one of: {', '.join(sorted(VALID_STATUSES))}")
+
+        changed_rule = dict(rules[index])
+        changed_rule["title"] = title
+        changed_rule["content"] = content
+        changed_rule["status"] = status
+        changed_rule["tags"] = normalize_tags(raw_update.get("tags", []))
+        changed_rule["updated_at"] = timestamp
+        rules[index] = changed_rule
+        changed_rules.append(changed_rule)
+
+    save_rules(paths, rules)
+    return changed_rules
 
 
 def pick_project_rules(
@@ -625,15 +685,12 @@ def cmd_pick(args: argparse.Namespace) -> int:
         if sys.platform != "win32":
             print("--ui is only supported on Windows", file=sys.stderr)
             return 1
-        if not selected:
-            print("no active project rules matched", file=sys.stderr)
-            return 1
         try:
-            selected_ids = run_picker(selected, args.query)
-        except (FileNotFoundError, RuntimeError) as exc:
+            picker_payload = run_picker(selected, args.query)
+        except (FileNotFoundError, RuntimeError, ValueError) as exc:
             print(str(exc), file=sys.stderr)
             return 1
-        if selected_ids is None:
+        if picker_payload is None:
             payload = build_payload(
                 action="pick-ui-cancel",
                 paths=paths,
@@ -645,7 +702,38 @@ def cmd_pick(args: argparse.Namespace) -> int:
             print_result(payload, args.json)
             return 0
         allowed_ids = {rule["id"] for rule in selected}
-        selected = [rule for rule in selected if rule["id"] in allowed_ids.intersection(selected_ids)]
+        try:
+            changed_rules = apply_picker_updates(
+                paths=paths,
+                rules=rules,
+                updates=picker_payload.get("updates", []),
+                allowed_ids=allowed_ids,
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        selected_ids = set(picker_payload.get("selected_ids", []))
+        selected = [
+            rule
+            for rule in rules
+            if rule["id"] in allowed_ids.intersection(selected_ids) and rule["status"] == ACTIVE_STATUS
+        ]
+        if not selected:
+            payload = build_payload(
+                action="pick-ui-update" if changed_rules else "pick-ui-empty",
+                paths=paths,
+                rules=rules,
+                selected_rules=[],
+                changed_rule=changed_rules[0] if len(changed_rules) == 1 else None,
+                message=(
+                    "project rules updated; no active project rules selected"
+                    if changed_rules
+                    else "no active project rules selected"
+                ),
+                session_payload=None,
+            )
+            print_result(payload, args.json)
+            return 0
     if not selected:
         print("no active project rules matched", file=sys.stderr)
         return 1
