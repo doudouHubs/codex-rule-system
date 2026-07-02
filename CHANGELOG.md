@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.6
+
+- Replaced the `$rule-check` picker list with a native checklist ListView.
+- Split row focus from pick selection: checkboxes pick rules, focused rows edit rules.
+- Preserved checked rule IDs across search filtering and removed implicit single-match auto-pick.
+
 ## 0.2.5
 
 - Upgraded `$rule-check` UI into a Windows native check/edit/pick flow.

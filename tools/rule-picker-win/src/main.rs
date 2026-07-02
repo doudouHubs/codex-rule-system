@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
@@ -13,17 +14,24 @@ use windows::Win32::Graphics::Gdi::{
     SetBkColor, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Controls::{
+    ICC_LISTVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx, LVCF_FMT, LVCF_TEXT,
+    LVCF_WIDTH, LVCFMT_LEFT, LVCOLUMNW, LVIF_STATE, LVIF_TEXT, LVIS_FOCUSED, LVIS_SELECTED,
+    LVIS_STATEIMAGEMASK, LVITEMW, LVM_DELETEALLITEMS, LVM_GETNEXTITEM, LVM_INSERTCOLUMNW,
+    LVM_INSERTITEMW, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMSTATE, LVM_SETITEMTEXTW,
+    LVN_ITEMCHANGED, LVNI_SELECTED, LVS_EX_CHECKBOXES, LVS_EX_FULLROWSELECT, LVS_EX_GRIDLINES,
+    LVS_REPORT, LVS_SHOWSELALWAYS, NM_CLICK, NMHDR, NMLISTVIEW, WC_LISTVIEWW,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{SetFocus, VK_ESCAPE, VK_RETURN};
 use windows::Win32::UI::WindowsAndMessaging::{
     ACCEL, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateAcceleratorTableW,
     CreateWindowExW, DefWindowProcW, DestroyAcceleratorTable, DestroyWindow, DispatchMessageW,
     ES_AUTOHSCROLL, ES_AUTOVSCROLL, ES_MULTILINE, FVIRTKEY, GWLP_USERDATA, GetClientRect,
-    GetMessageW, GetWindowLongPtrW, HMENU, LB_ADDSTRING, LB_GETCURSEL, LB_GETSEL, LB_RESETCONTENT,
-    LB_SETSEL, LBN_SELCHANGE, LBS_EXTENDEDSEL, LBS_NOTIFY, LoadCursorW, MSG, PostQuitMessage,
-    RegisterClassW, SW_RESTORE, SWP_NOZORDER, SendMessageW, SetWindowLongPtrW, SetWindowPos,
-    SetWindowTextW, ShowWindow, TranslateAcceleratorW, TranslateMessage, WINDOW_STYLE, WM_CLOSE,
-    WM_COMMAND, WM_CREATE, WM_CTLCOLORDLG, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC,
-    WM_DESTROY, WM_ERASEBKGND, WM_SETFONT, WM_SIZE, WNDCLASSW, WS_BORDER, WS_CHILD,
+    GetMessageW, GetWindowLongPtrW, HMENU, LoadCursorW, MSG, PostQuitMessage, RegisterClassW,
+    SW_RESTORE, SWP_NOZORDER, SendMessageW, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
+    ShowWindow, TranslateAcceleratorW, TranslateMessage, WINDOW_STYLE, WM_CLOSE, WM_COMMAND,
+    WM_CREATE, WM_CTLCOLORDLG, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC, WM_DESTROY,
+    WM_ERASEBKGND, WM_NOTIFY, WM_SETFONT, WM_SIZE, WNDCLASSW, WS_BORDER, WS_CHILD,
     WS_OVERLAPPEDWINDOW, WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::PCWSTR;
@@ -102,6 +110,7 @@ struct WindowState {
     sender: Sender<PickerAction>,
     rules: Vec<RuleItem>,
     visible_indices: Vec<usize>,
+    checked_rule_ids: HashSet<String>,
     search: HWND,
     list: HWND,
     title_edit: HWND,
@@ -326,6 +335,12 @@ fn run_picker_window(rules: Vec<RuleItem>, initial_query: String) -> PickerActio
     let (sender, receiver) = channel();
 
     unsafe {
+        let common_controls = INITCOMMONCONTROLSEX {
+            dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
+            dwICC: ICC_LISTVIEW_CLASSES,
+        };
+        let _ = InitCommonControlsEx(&common_controls);
+
         let hinstance = GetModuleHandleW(None).unwrap();
         let class_name = to_wstring("RulePickerWindow");
         let wnd_class = WNDCLASSW {
@@ -426,7 +441,7 @@ unsafe extern "system" fn wnd_proc(
 
             let _label = create_label(
                 hwnd,
-                "搜索并勾选规则；选中单条后可编辑项目规则。Enter 保存编辑并选取，Esc 取消。",
+                "勾选复选框表示要 pick；单击行只负责编辑。Enter 保存编辑并选取，Esc 取消。",
                 18,
                 18,
                 900,
@@ -460,6 +475,7 @@ unsafe extern "system" fn wnd_proc(
                 sender: params.sender,
                 rules: params.rules,
                 visible_indices: Vec::new(),
+                checked_rule_ids: HashSet::new(),
                 search,
                 list,
                 title_edit,
@@ -487,7 +503,6 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_COMMAND => {
             let id = loword(wparam.0 as u32) as usize;
-            let notification = hiword(wparam.0 as u32);
             let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState };
             if ptr.is_null() {
                 return LRESULT(0);
@@ -499,10 +514,6 @@ unsafe extern "system" fn wnd_proc(
                     refresh_visible_rules(state);
                     load_editor_from_current_selection(state);
                 }
-                ID_LIST if notification as u32 == LBN_SELCHANGE => {
-                    save_editor_to_current_rule(state);
-                    load_editor_from_current_selection(state);
-                }
                 ID_SAVE_EDIT => {
                     save_editor_to_current_rule(state);
                     refresh_visible_rules(state);
@@ -512,6 +523,15 @@ unsafe extern "system" fn wnd_proc(
                 ID_CANCEL => finish_cancelled(hwnd, state),
                 _ => {}
             }
+            LRESULT(0)
+        }
+        WM_NOTIFY => {
+            let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState };
+            if ptr.is_null() {
+                return LRESULT(0);
+            }
+            let state = unsafe { &mut *ptr };
+            handle_list_notify(state, lparam);
             LRESULT(0)
         }
         WM_SIZE => {
@@ -607,23 +627,17 @@ fn refresh_visible_rules(state: &mut WindowState) {
 
     state.visible_indices.clear();
     unsafe {
-        let _ = SendMessageW(state.list, LB_RESETCONTENT, WPARAM(0), LPARAM(0));
+        let _ = SendMessageW(state.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
     }
 
-    for (index, rule) in state.rules.iter().enumerate() {
+    for index in 0..state.rules.len() {
+        let rule = state.rules[index].clone();
         if !terms.iter().all(|term| rule.search_text.contains(term)) {
             continue;
         }
         state.visible_indices.push(index);
-        let text = to_wstring(&rule.display);
-        unsafe {
-            let _ = SendMessageW(
-                state.list,
-                LB_ADDSTRING,
-                WPARAM(0),
-                LPARAM(text.as_ptr() as isize),
-            );
-        }
+        let row_index = state.visible_indices.len() - 1;
+        insert_rule_row(state, row_index, &rule);
     }
 
     if state.visible_indices.is_empty() {
@@ -632,40 +646,160 @@ fn refresh_visible_rules(state: &mut WindowState) {
         } else {
             "没有匹配的项目规则。请调整搜索关键词。"
         };
-        let text = to_wstring(message);
-        unsafe {
-            let _ = SendMessageW(
-                state.list,
-                LB_ADDSTRING,
-                WPARAM(0),
-                LPARAM(text.as_ptr() as isize),
-            );
+        insert_empty_row(state.list, message);
+    }
+}
+
+fn insert_rule_row(state: &WindowState, row_index: usize, rule: &RuleItem) {
+    let checked = state.checked_rule_ids.contains(&rule.id);
+    let preview = content_preview(&rule.content);
+    let tags = rule.tags.join(",");
+    let values = [
+        "",
+        rule.id.as_str(),
+        rule.status.as_str(),
+        tags.as_str(),
+        rule.title.as_str(),
+        preview.as_str(),
+    ];
+
+    insert_list_view_item(state.list, row_index, values[0]);
+    for (subitem, value) in values.iter().enumerate().skip(1) {
+        set_list_view_subitem(state.list, row_index, subitem, value);
+    }
+    set_list_view_checked(state.list, row_index, checked);
+}
+
+fn insert_empty_row(list: HWND, message: &str) {
+    insert_list_view_item(list, 0, "");
+    set_list_view_subitem(list, 0, 4, message);
+}
+
+fn insert_list_view_item(list: HWND, row_index: usize, text: &str) {
+    let mut text = to_wstring(text);
+    let mut item = LVITEMW {
+        mask: LVIF_TEXT,
+        iItem: row_index as i32,
+        iSubItem: 0,
+        pszText: windows::core::PWSTR(text.as_mut_ptr()),
+        ..Default::default()
+    };
+    unsafe {
+        let _ = SendMessageW(
+            list,
+            LVM_INSERTITEMW,
+            WPARAM(0),
+            LPARAM((&mut item as *mut LVITEMW) as isize),
+        );
+    }
+}
+
+fn set_list_view_subitem(list: HWND, row_index: usize, subitem: usize, text: &str) {
+    let mut text = to_wstring(text);
+    let mut item = LVITEMW {
+        iSubItem: subitem as i32,
+        pszText: windows::core::PWSTR(text.as_mut_ptr()),
+        ..Default::default()
+    };
+    unsafe {
+        let _ = SendMessageW(
+            list,
+            LVM_SETITEMTEXTW,
+            WPARAM(row_index),
+            LPARAM((&mut item as *mut LVITEMW) as isize),
+        );
+    }
+}
+
+fn set_list_view_checked(list: HWND, row_index: usize, checked: bool) {
+    let state_image = if checked { 2u32 } else { 1u32 } << 12;
+    let mut item = LVITEMW {
+        mask: LVIF_STATE,
+        state: windows::Win32::UI::Controls::LIST_VIEW_ITEM_STATE_FLAGS(state_image),
+        stateMask: LVIS_STATEIMAGEMASK,
+        ..Default::default()
+    };
+    unsafe {
+        let _ = SendMessageW(
+            list,
+            LVM_SETITEMSTATE,
+            WPARAM(row_index),
+            LPARAM((&mut item as *mut LVITEMW) as isize),
+        );
+    }
+}
+
+fn list_view_checked_state(raw_state: u32) -> bool {
+    ((raw_state & LVIS_STATEIMAGEMASK.0) >> 12) == 2
+}
+
+fn content_preview(content: &str) -> String {
+    const MAX_CHARS: usize = 80;
+    let normalized = content.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut preview = normalized.chars().take(MAX_CHARS).collect::<String>();
+    if normalized.chars().count() > MAX_CHARS {
+        preview.push('…');
+    }
+    preview
+}
+
+fn handle_list_notify(state: &mut WindowState, lparam: LPARAM) {
+    if lparam.0 == 0 {
+        return;
+    }
+    let header = unsafe { &*(lparam.0 as *const NMHDR) };
+    if header.idFrom != ID_LIST {
+        return;
+    }
+    match header.code {
+        LVN_ITEMCHANGED => handle_list_item_changed(state, lparam),
+        NM_CLICK => {
+            save_editor_to_current_rule(state);
+            load_editor_from_current_selection(state);
+        }
+        _ => {}
+    }
+}
+
+fn handle_list_item_changed(state: &mut WindowState, lparam: LPARAM) {
+    let event = unsafe { &*(lparam.0 as *const NMLISTVIEW) };
+    if event.iItem < 0 {
+        return;
+    }
+    let visible_index = event.iItem as usize;
+    let Some(rule_index) = state.visible_indices.get(visible_index).copied() else {
+        return;
+    };
+
+    if (event.uChanged.0 & LVIF_STATE.0) != 0
+        && ((event.uNewState ^ event.uOldState) & LVIS_STATEIMAGEMASK.0) != 0
+    {
+        let rule_id = state.rules[rule_index].id.clone();
+        if list_view_checked_state(event.uNewState) {
+            state.checked_rule_ids.insert(rule_id);
+        } else {
+            state.checked_rule_ids.remove(&rule_id);
         }
     }
 
-    if state.visible_indices.len() == 1 {
-        unsafe {
-            let _ = SendMessageW(state.list, LB_SETSEL, WPARAM(1), LPARAM(0));
-        }
+    if (event.uChanged.0 & LVIF_STATE.0) != 0
+        && ((event.uNewState ^ event.uOldState) & (LVIS_SELECTED.0 | LVIS_FOCUSED.0)) != 0
+        && (event.uNewState & (LVIS_SELECTED.0 | LVIS_FOCUSED.0)) != 0
+    {
+        save_editor_to_current_rule(state);
+        load_editor_from_current_selection(state);
     }
 }
 
 fn finish_with_selection(hwnd: HWND, state: &mut WindowState) {
     save_editor_to_current_rule(state);
 
-    let mut selected_ids = Vec::new();
-    for (visible_index, rule_index) in state.visible_indices.iter().enumerate() {
-        let selected =
-            unsafe { SendMessageW(state.list, LB_GETSEL, WPARAM(visible_index), LPARAM(0)).0 > 0 };
-        if selected {
-            selected_ids.push(state.rules[*rule_index].id.clone());
-        }
-    }
-
-    // 搜索后只剩一条时允许直接 Enter，减少“还得点一下”的摩擦。
-    if selected_ids.is_empty() && state.visible_indices.len() == 1 {
-        selected_ids.push(state.rules[state.visible_indices[0]].id.clone());
-    }
+    let selected_ids = state
+        .rules
+        .iter()
+        .filter(|rule| state.checked_rule_ids.contains(&rule.id))
+        .map(|rule| rule.id.clone())
+        .collect::<Vec<_>>();
 
     state.action_sent = true;
     let _ = state.sender.send(PickerAction::Pick(PickerResult {
@@ -717,15 +851,20 @@ fn current_visible_index(state: &WindowState) -> Option<usize> {
     if state.visible_indices.is_empty() {
         return None;
     }
-    let raw_index = unsafe { SendMessageW(state.list, LB_GETCURSEL, WPARAM(0), LPARAM(0)).0 };
+    let raw_index = unsafe {
+        SendMessageW(
+            state.list,
+            LVM_GETNEXTITEM,
+            WPARAM(usize::MAX),
+            LPARAM(LVNI_SELECTED as isize),
+        )
+        .0
+    };
     if raw_index >= 0 {
         let index = raw_index as usize;
         if index < state.visible_indices.len() {
             return Some(index);
         }
-    }
-    if state.visible_indices.len() == 1 {
-        return Some(0);
     }
     None
 }
@@ -815,17 +954,17 @@ fn create_multiline_edit(
 
 fn create_list(hwnd: HWND, x: i32, y: i32, width: i32, height: i32, id: usize) -> HWND {
     unsafe {
-        CreateWindowExW(
+        let list = CreateWindowExW(
             Default::default(),
-            PCWSTR(to_wstring("LISTBOX").as_ptr()),
+            WC_LISTVIEWW,
             PCWSTR(to_wstring("").as_ptr()),
             WINDOW_STYLE(
                 WS_CHILD.0
                     | WS_VISIBLE.0
                     | WS_BORDER.0
                     | WS_VSCROLL.0
-                    | LBS_EXTENDEDSEL as u32
-                    | LBS_NOTIFY as u32,
+                    | LVS_REPORT as u32
+                    | LVS_SHOWSELALWAYS as u32,
             ),
             x,
             y,
@@ -836,7 +975,51 @@ fn create_list(hwnd: HWND, x: i32, y: i32, width: i32, height: i32, id: usize) -
             None,
             None,
         )
-        .unwrap_or(HWND(null_mut()))
+        .unwrap_or(HWND(null_mut()));
+        configure_list_view(list);
+        list
+    }
+}
+
+fn configure_list_view(list: HWND) {
+    let extended_style = LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES;
+    unsafe {
+        let _ = SendMessageW(
+            list,
+            LVM_SETEXTENDEDLISTVIEWSTYLE,
+            WPARAM(extended_style as usize),
+            LPARAM(extended_style as isize),
+        );
+    }
+    let columns = [
+        ("选取", 54),
+        ("ID", 96),
+        ("状态", 76),
+        ("标签", 150),
+        ("标题", 170),
+        ("内容预览", 360),
+    ];
+    for (index, (title, width)) in columns.iter().enumerate() {
+        insert_list_view_column(list, index, title, *width);
+    }
+}
+
+fn insert_list_view_column(list: HWND, index: usize, title: &str, width: i32) {
+    let mut title = to_wstring(title);
+    let mut column = LVCOLUMNW {
+        mask: LVCF_FMT | LVCF_TEXT | LVCF_WIDTH,
+        fmt: LVCFMT_LEFT,
+        cx: width,
+        pszText: windows::core::PWSTR(title.as_mut_ptr()),
+        ..Default::default()
+    };
+    unsafe {
+        let _ = SendMessageW(
+            list,
+            LVM_INSERTCOLUMNW,
+            WPARAM(index),
+            LPARAM((&mut column as *mut LVCOLUMNW) as isize),
+        );
     }
 }
 
@@ -996,10 +1179,6 @@ fn to_wstring(input: &str) -> Vec<u16> {
 
 fn loword(value: u32) -> u16 {
     (value & 0xFFFF) as u16
-}
-
-fn hiword(value: u32) -> u16 {
-    ((value >> 16) & 0xFFFF) as u16
 }
 
 fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
