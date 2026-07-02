@@ -1,13 +1,13 @@
 ---
-name: rule-project
-description: Manage project-shared rules.
+name: rule-check
+description: Check and pick project rules.
 ---
 
-# rule-project
+# rule-check
 
 ## Overview
 
-`$rule-project` 是项目共享规则库的统一操作入口。
+`$rule-check` 是项目共享规则库的检查和选取入口。
 
 项目规则库位于 `<project_root>/.codex/project-rules/`。它跨会话共享，但不会自动进入当前会话；需要 `pick` 后才复制为当前会话规则快照。
 
@@ -17,7 +17,7 @@ description: Manage project-shared rules.
 
 ```powershell
 # 将 $skillRoot 设置为当前 SKILL.md 所在目录；从脚本文件执行时可用 $PSScriptRoot。
-$skillRoot = "C:\path\to\rule-system\skills\rule-project"
+$skillRoot = "C:\path\to\rule-system\skills\rule-check"
 $pluginRoot = Resolve-Path (Join-Path $skillRoot "..\..")
 $script = Join-Path $pluginRoot "scripts/project_rules.py"
 
@@ -50,7 +50,7 @@ python $script pick --ui --query "输出格式" --json
 
 ## Guardrails
 
-- 不在 `$rule-project` 里新增项目规则；新增走 `$rule-add --scope project`。
+- 不在 `$rule-check` 里新增项目规则；新增走 `$rule-add --scope project`。
 - 不展示或修改当前会话规则；当前会话规则由 `$rule-list/update/delete` 管。
 - 不追溯修改已经 pick 进会话的规则快照。
 - 不自动 pick 所有项目规则。

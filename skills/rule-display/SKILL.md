@@ -13,7 +13,7 @@ description: Display current-session rules.
 
 ## Display Rules
 
-1. 当 `$rule-add`、`$rule-update`、`$rule-delete` 或 `$rule-project` pick 成功执行后，本轮回复结尾必须输出完整“收集的规则列表”。
+1. 当 `$rule-add`、`$rule-update`、`$rule-delete` 或 `$rule-check` pick 成功执行后，本轮回复结尾必须输出完整“收集的规则列表”。
 2. 完整列表只展示当前有效规则的 `content`，格式固定为：
 
 ```text
@@ -64,6 +64,5 @@ python $script list --summary
 - 不要把“规则展示”写进全局提示词大段细则；全局只保留路由。
 - 不要把项目规则、长期记忆、会话规则混在同一列表里。
 - 如果规则刚变更，优先完整列表；如果只是普通回复，优先摘要；如果没有规则，别硬凑小节。
-
 
 

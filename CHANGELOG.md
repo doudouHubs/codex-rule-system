@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.4
+
+- Renamed the project rule operation skill from `$rule-project` to `$rule-check`.
+- Retired the `$rule-project` skill entry to keep the autocomplete surface short.
+
 ## 0.2.3
 
 - Shortened skill display titles to lowercase `rule-*` names.
