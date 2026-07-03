@@ -680,11 +680,14 @@ def cmd_pick(args: argparse.Namespace) -> int:
     session_rules, project_root, paths = resolve_project_context(args)
     rules = load_rules(paths)
     ids = split_csv(args.ids)
-    selected = filter_rules(rules, include_all=False, tag=args.tag, query=args.query, ids=ids)
     if args.ui:
         if sys.platform != "win32":
             print("--ui is only supported on Windows", file=sys.stderr)
             return 1
+        # UI 是“管理窗口”，不是纯 pick 结果列表：必须让窗口始终打开，
+        # 并且能管理 deprecated 规则。query 只作为窗口初始搜索词交给 picker，
+        # 不在 Python 层提前过滤掉候选，否则搜索无匹配时会把管理窗口饿成空进程。
+        selected = filter_rules(rules, include_all=True, tag=args.tag, ids=ids)
         try:
             picker_payload = run_picker(selected, args.query)
         except (FileNotFoundError, RuntimeError, ValueError) as exc:
@@ -734,6 +737,8 @@ def cmd_pick(args: argparse.Namespace) -> int:
             )
             print_result(payload, args.json)
             return 0
+    else:
+        selected = filter_rules(rules, include_all=False, tag=args.tag, query=args.query, ids=ids)
     if not selected:
         print("no active project rules matched", file=sys.stderr)
         return 1

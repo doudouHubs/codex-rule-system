@@ -13,7 +13,7 @@ It provides two layers:
 - `$rule-add --scope project`: add stable project-shared rules through the canonical add entry.
 - `$rule-capture`: extract atomic rule candidates from recent conversation context.
 - `$rule-display`: decide whether to print full rules or a short summary.
-- `$rule-check`: open the Windows native checklist rule checker to search, edit, and checkbox-pick project-shared rules; CLI list/update/delete/pick remains available.
+- `$rule-check`: always open the Windows native checklist rule manager to search, edit, switch active/deprecated status, see checked/visible counts, and checkbox-pick project-shared rules; CLI list/update/delete/pick remains available.
 - `$rule-system`: explain routing, boundaries, and global-prompt migration guidance.
 
 ## Storage Model
@@ -71,7 +71,7 @@ Ask Codex for rule operations naturally:
 查看当前会话规则。
 把这条项目级规则加入项目规则库：命令和路径使用反引号包裹。
 把项目规则库里和输出格式相关的规则拾取到当前会话。
-打开 rule-check checklist 窗口，从项目规则库里手动搜索、勾选、编辑并拾取规则。
+打开 rule-check checklist 窗口，从项目规则库里手动搜索、勾选、确认当前编辑对象并拾取规则。
 ```
 
 The action skills include command examples. Those examples intentionally resolve script paths relative to each skill's `SKILL.md` source locator, so the plugin works from a local repository, a Codex cache directory, or a GitHub-installed plugin.

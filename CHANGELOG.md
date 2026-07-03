@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.7
+
+- Refined the `$rule-check` Windows picker layout with a clearer title, search section, editor section, and explicit shortcut labels.
+- Added live checklist status text showing checked count, visible rule count, total rule count, and the current editing rule.
+- Replaced the project rule status text input with a native capsule switch for `active` / `deprecated`.
+- Changed `$rule-check pick --ui` to always open the management window and show both `active` and `deprecated` rules instead of pre-filtering to active pick candidates.
+- Restored a visible editor target after search/filter refreshes so row focus and checkbox selection stay understandable.
+
 ## 0.2.6
 
 - Replaced the `$rule-check` picker list with a native checklist ListView.
