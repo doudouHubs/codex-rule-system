@@ -224,17 +224,17 @@ def generate_rule_id(existing_ids: set[str]) -> str:
 
 def split_batch_segments(raw: str) -> list[str]:
     """
-    用中文分号拆分批量输入。
+    用英文分号拆分批量输入。
 
-    这里明确只把 `；` 当批量分隔符：
-    - 保持和用户要求一致，别自作聪明把半角分号也混进来
+    这里明确只把 ASCII `;` 当批量分隔符：
+    - 中文 `；` 是自然语言高频标点，不能再把用户一句中文拦成批量协议
     - 自动去掉首尾空白与空段，避免出现 `a；；b` 这种脏输入时把空规则塞进去
     """
 
-    if "；" not in raw:
+    if ";" not in raw:
         value = raw.strip()
         return [value] if value else []
-    return [segment.strip() for segment in raw.split("；") if segment.strip()]
+    return [segment.strip() for segment in raw.split(";") if segment.strip()]
 
 
 def build_add_entries(title_raw: str, content_raw: str) -> list[dict[str, str]]:
@@ -242,12 +242,23 @@ def build_add_entries(title_raw: str, content_raw: str) -> list[dict[str, str]]:
     解析 rule-add 的单条/批量输入。
 
     规则：
-    1. `title` 和 `content` 都不含 `；` 时，按单条规则处理
-    2. 任一侧含 `；` 时进入批量模式
+    1. `title` 和 `content` 都不含英文分号 `;` 时，按单条规则处理
+    2. 只有 `title` 和 `content` 两侧都含英文分号 `;` 时才进入批量模式
     3. 批量模式要求标题数和内容数一一对应；数量不一致直接报错
 
-    这么做虽然朴素，但边界清楚，不会因为“猜用户意思”把规则写歪。
+    这么做是为了避免把正文里的正常中文标点误判为批量指令。
+    批量属于结构化输入，必须使用 ASCII 分隔符并由标题和正文两侧共同表达。
     """
+
+    title = title_raw.strip()
+    content = content_raw.strip()
+    if not title or not content:
+        raise ValueError("title and content are required")
+
+    # 中文 `；` 永远按正文标点处理；批量协议只认英文 `;`。
+    # 这样既保留批量能力，也不会再让中文自然句子被错误拦截。
+    if ";" not in title or ";" not in content:
+        return [{"title": title, "content": content}]
 
     title_segments = split_batch_segments(title_raw)
     content_segments = split_batch_segments(content_raw)
@@ -255,13 +266,9 @@ def build_add_entries(title_raw: str, content_raw: str) -> list[dict[str, str]]:
     if not title_segments or not content_segments:
         raise ValueError("title and content are required")
 
-    is_batch = len(title_segments) > 1 or len(content_segments) > 1
-    if not is_batch:
-        return [{"title": title_segments[0], "content": content_segments[0]}]
-
     if len(title_segments) != len(content_segments):
         raise ValueError(
-            "batch add requires the same number of title/content segments when using Chinese semicolon `；`"
+            "batch add requires the same number of title/content segments when using English semicolon `;`"
         )
 
     return [
@@ -411,8 +418,10 @@ def cmd_add_session(args: argparse.Namespace) -> int:
 def cmd_add_project(args: argparse.Namespace) -> int:
     """新增项目共享规则，作为 `$rule-add --scope project` 的实现入口。"""
 
-    if "；" in args.title or "；" in args.content:
-        print("project-scope add does not support Chinese semicolon batch mode", file=sys.stderr)
+    # 项目规则不支持批量新增；这里只拦英文 `;` 表达的批量协议。
+    # 中文 `；` 是普通正文标点，不能因为用户写中文就误伤新增流程。
+    if ";" in args.title and ";" in args.content:
+        print("project-scope add does not support English semicolon batch mode", file=sys.stderr)
         return 1
 
     project_root = Path(args.project_root).resolve() if args.project_root else detect_project_root(Path.cwd())

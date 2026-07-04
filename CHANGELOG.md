@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.8
+
+- Fixed `$rule-add` so Chinese semicolon `；` is always treated as normal text.
+- Changed session batch add to recognize only English semicolon `;` separators on both title and content.
+- Changed project-scope batch rejection to trigger only on English semicolon `;`, allowing Chinese prose without false failures.
+
 ## 0.2.7
 
 - Refined the `$rule-check` Windows picker layout with a clearer title, search section, editor section, and explicit shortcut labels.

@@ -28,7 +28,7 @@ description: Add a session or project rule.
 6. 判断规则作用域：临时、本轮、当前会话约束走 `scope=session`；稳定、跨会话复用、项目级约束走 `scope=project`。
 7. `scope=session` 初始化 `<project_root>/.codex/session-rules/<session_id>/rules.yaml` 与 `meta.yaml`，追加字段为：`id`、`title`、`content`、`created_at`、`updated_at`。
 8. `scope=project` 初始化 `<project_root>/.codex/project-rules/rules.yaml` 与 `meta.yaml`，追加字段为：`id`、`title`、`content`、`status`、`tags`、`created_at`、`updated_at`、`picked_count`、`last_picked_at`。
-9. `scope=session` 中若 `--title` 和 `--content` 出现中文分号 `；`，进入批量模式；`scope=project` 不支持批量模式，避免标签和状态语义被猜错。
+9. `scope=session` 中只有 `--title` 和 `--content` 两侧都出现英文分号 `;` 时，才进入批量模式；中文分号 `；` 永远视为普通正文标点。
 10. `scope=session` 成功后在回复结尾输出完整的“收集的规则列表”，并立即恢复被打断的原任务执行流；规则写入只是中间动作，不是终点。
 11. `scope=project` 成功后提示该规则只进入项目规则库；若希望当前会话立即使用，还需要显式 `$rule-check` pick。
 
@@ -61,8 +61,11 @@ python $script add --title "范围约束" --content "只查原因，不改代码
 # 项目级共享规则：稳定、跨会话复用的规则写入项目规则库
 python $script add --scope project --title "输出格式" --content "命令和路径使用反引号包裹" --tags "output,format"
 
-# 批量：标题和内容都用中文分号 `；` 对齐拆分
-python $script add --title "范围约束；输出格式；禁止项" --content "只查原因，不改代码；先给结论，再给证据；不要扩题"
+# 批量：标题和内容都用英文分号 `;` 对齐拆分
+python $script add --title "范围约束;输出格式;禁止项" --content "只查原因，不改代码;先给结论，再给证据;不要扩题"
+
+# 普通正文可以包含中文分号；不会被误判成批量
+python $script add --title "GUI 验收边界" --content "不要用坐标自动点击冒充人工体验；真实交互由用户确认"
 
 # 指定项目根和会话 ID（主要用于调试或回归）
 python $script add --project-root C:\path\to\project --session-id my-session --title "输出格式" --content "先给结论，再给证据"
@@ -95,7 +98,7 @@ python $script add --title "禁止项" --content "不要扩题" --json
 - 不要把 `Plan Mode` 误解为必须切换到 `$plan` 或 `$do-plan`；除非用户显式要求，否则 `rule-add` 只负责规则闭环和恢复原任务。
 - 在 Plan Mode 中，规则写入成功后不得停在收集回执；必须恢复被打断的主任务执行流。
 - 非 Plan Mode 下即使不追问，也必须先做最小充分的语义重组，确保规则可执行、可验证。
-- 批量模式下，`title` 与 `content` 用中文分号 `；` 拆分后的数量必须一致；不一致时直接失败，不猜用户意思。
+- 批量模式只在 `title` 与 `content` 两侧都包含英文分号 `;` 时触发；中文分号 `；` 必须保留为普通文本，不得误判为批量。
+- 批量模式下，`title` 与 `content` 用英文分号 `;` 拆分后的数量必须一致；不一致时直接失败，不猜用户意思。
 - 批量模式只适用于 `scope=session`；项目规则新增若需要多条，应逐条调用，避免 tag/status 归属混乱。
-
-
+- `scope=project` 允许标题或正文包含中文分号 `；`；只有两侧都包含英文分号 `;` 时，才按“疑似项目级批量新增”拒绝。
