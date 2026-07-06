@@ -15,6 +15,10 @@ COMMAND_MAP = {
     "delete": "project-delete",
     "pick": "pick",
     "scan": "scan",
+    "module-list": "module-list",
+    "module-add": "module-add",
+    "module-update": "module-update",
+    "module-delete": "module-delete",
 }
 
 

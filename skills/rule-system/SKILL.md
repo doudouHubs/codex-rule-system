@@ -13,7 +13,8 @@ description: Explain rule-system boundaries.
 
 ## Boundaries
 
-- v0.3 起规则内容只有项目级，事实来源是 `<project_root>/.codex-rules/rules.db`。
+- v0.4 起规则内容只有项目级，事实来源是 `<project_root>/.codex-rules/rules.db`。
+- 规则模块是 `rule_modules` 表里的强枚举；每条规则只能属于一个模块，默认 `global`。
 - 当前会话采用哪些规则由 `rule_selections` 通过 `session_id` 逻辑隔离保存。
 - 会话不保存规则正文，不存在 `.codex/session-rules/<session_id>/rules.yaml`。
 - 项目规则不再保存到 `.codex/project-rules/rules.yaml`。
@@ -26,6 +27,7 @@ description: Explain rule-system boundaries.
 
 - 用户要求新增规则、记录当前约束、把某条要求收集成规则：使用 `$rule-add`。
 - 用户要求查看、搜索、编辑、废弃、删除项目规则库，或选择当前会话采用哪些规则：使用 `$rule-check`；需要人工检查时默认打开 UI。
+- 用户要求新增、修改、删除规则模块枚举：先进入 Plan Mode 或等价计划，再使用 `$rule-module`。
 - 用户要求查看当前会话采用的规则：使用 `$rule-list`。
 - 用户要求修改当前会话已采用规则：使用 `$rule-update`。
 - 用户要求当前会话不再采用某条规则或清空采用关系：使用 `$rule-delete`。
@@ -47,6 +49,7 @@ description: Explain rule-system boundaries.
 
 - `.codex-rules/rules.db` 的 schema 与路径细节
 - 项目规则 CRUD 与当前会话选用关系
+- 模块枚举治理、模块筛选与 rule-check UI 模块编辑流程
 - rule-check UI 检查/编辑/选择流程
 - rule-capture 候选提炼规则
 - rule-scan 旧 YAML 显式导入规则

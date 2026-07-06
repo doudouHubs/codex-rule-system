@@ -1,7 +1,7 @@
 {
   "name": "rule-system",
-  "version": "0.3.0",
-  "description": "Project-level SQLite rule library and current-session rule selection workflows for Codex projects.",
+  "version": "0.4.0",
+  "description": "Project-level SQLite rule library with module enums and current-session rule selection workflows for Codex projects.",
   "author": {
     "name": "X1"
   },
@@ -13,13 +13,14 @@
     "plugin",
     "rules",
     "sqlite",
+    "modules",
     "rule-selections"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Rule System",
-    "shortDescription": "Manage project rules and session selections.",
-    "longDescription": "Rule System packages a project-level SQLite rule library, current-session selection management, rule display policy, and context capture without mixing rules into long-term memory.",
+    "shortDescription": "Manage modular project rules and session selections.",
+    "longDescription": "Rule System packages a project-level SQLite rule library with module enums, current-session selection management, rule display policy, and context capture without mixing rules into long-term memory.",
     "developerName": "X1",
     "category": "Productivity",
     "capabilities": [

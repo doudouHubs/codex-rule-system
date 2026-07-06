@@ -11,6 +11,8 @@ description: Check, edit, and select project rules.
 
 规则内容只保存在 `<project_root>/.codex-rules/rules.db` 的项目级规则表中；当前会话只保存 `session_id -> rule_id` 的选用关系，不复制规则正文。
 
+v0.4 起规则拥有单值强分类 `module`。`rule-check` 支持按模块筛选；选择业务模块时默认同时显示 `global` 通用规则。
+
 ## Commands
 
 ```powershell
@@ -21,13 +23,16 @@ $exe = Join-Path $pluginRoot "bin/rule-system.exe"
 & $exe project-list
 & $exe project-list --tag output
 & $exe project-list --query "响应式"
+& $exe project-list --module frontend
 & $exe project-list --all
 
 & $exe check
 & $exe check --query "输出格式"
+& $exe check --module frontend
 
 & $exe project-update --id rule-12345678 --content "先改共享 contract，再改调用方"
 & $exe project-update --id rule-12345678 --tags "architecture,contract"
+& $exe project-update --id rule-12345678 --module backend
 & $exe project-update --id rule-12345678 --status deprecated
 
 & $exe project-delete --id rule-12345678
@@ -42,6 +47,9 @@ $exe = Join-Path $pluginRoot "bin/rule-system.exe"
 
 - 默认需要人工检查、编辑或选择规则时，优先使用 `pick --ui` 打开 Windows 原生 checklist 管理窗口。
 - `list` 默认只展示 `active` 规则；`--all` 包含 `deprecated` 规则。
+- `--module global` 只显示 `global`；`--module frontend` 显示 `frontend + global`。
+- UI 左上模块筛选只改变可见行，不清空已勾选规则。
+- UI 右侧模块选择会更新项目规则本体；目标模块必须是 active 枚举。
 - `update` 按 `id` 更新项目规则本体；已选用该规则的会话之后会读取最新内容。
 - `delete` 默认把项目规则标记为 `deprecated`；只有用户明确要求彻底删除时才使用 `--hard`。
 - `pick` 不复制规则正文，只更新当前 `session_id` 的选用关系。

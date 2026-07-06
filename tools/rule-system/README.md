@@ -6,8 +6,8 @@ Windows native runtime for `rule-system` project rules.
 cargo build --release --manifest-path tools/rule-system/Cargo.toml
 ```
 
-The executable owns SQLite CRUD, session selections, and the native checklist UI. The internal UI protocol prints:
+The executable owns SQLite CRUD, module enums, session selections, and the native checklist UI. The internal UI protocol prints:
 
 ```json
-{"selected_ids":["rule-12345678"],"cancelled":false}
+{"selected_ids":["rule-12345678"],"updates":[],"cancelled":false}
 ```

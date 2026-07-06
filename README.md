@@ -8,12 +8,14 @@
 - The only storage root is `<project_root>/.codex-rules/`.
 - The SQLite database is `<project_root>/.codex-rules/rules.db`.
 - Current sessions store selections only: `session_id -> rule_id`.
-- There are no session rule YAML files and no project rule YAML files in v0.3.
+- Rules have one strong enum module; default module is `global`.
+- There are no session rule YAML files and no project rule YAML files in v0.4.
 
 ## Capabilities
 
 - `$rule-add`: add project-level rules.
-- `$rule-check`: open the Windows native checklist manager, edit project rules, switch `active` / `deprecated`, and choose which rules the current session adopts.
+- `$rule-module`: manage module enum entries after Plan Mode / planned module governance.
+- `$rule-check`: open the Windows native checklist manager, filter by module, edit project rules, switch `active` / `deprecated`, and choose which rules the current session adopts.
 - `$rule-list`: list rules selected by the current session.
 - `$rule-update`: update project-level rules that are selected by the current session.
 - `$rule-delete`: unselect rules from the current session.
@@ -26,10 +28,11 @@ The plugin does not write long-term memory and does not write `project-memory`.
 
 ## Storage Schema
 
-SQLite uses three main tables:
+SQLite uses four main tables:
 
+- `rule_modules`: strong enum module owner. `global` is built in.
 - `rules`: rule identity, title, status, timestamps, pick counters.
-- `rule_details`: rule content, tags JSON, search text.
+- `rule_details`: rule content, module slug, tags JSON, search text.
 - `rule_selections`: current-session selection relation keyed by `session_id`.
 
 This is a breaking storage model. Runtime commands ignore old `.codex/session-rules` and `.codex/project-rules` YAML files. Use `$rule-scan` / `rule-system.exe scan` only when you explicitly want to import old YAML data into SQLite.
@@ -40,11 +43,13 @@ Ask Codex for rule operations naturally:
 
 ```text
 把这条要求收集成规则：每次修改共享层前先说明影响范围。
+新增一个 frontend 模块，先做模块规划。
 打开 rule-check checklist 窗口，让我选择当前会话采用哪些规则。
+打开 rule-check，只看 frontend 模块。
 查看当前会话采用的规则。
 当前会话不再采用 rule-12345678。
 把已选规则 rule-12345678 的内容改成：命令和路径使用反引号包裹。
-扫描旧 .codex 目录里的 YAML 规则，导入到新的 SQLite 规则库。
+扫描旧 .codex 目录里的 YAML 规则，自动分析模块并导入到新的 SQLite 规则库。
 ```
 
 The action skills include command examples. Those examples resolve script paths relative to each skill's `SKILL.md` source locator, so the plugin works from a local repository, a Codex cache directory, or a GitHub-installed plugin.

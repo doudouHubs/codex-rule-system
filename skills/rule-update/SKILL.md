@@ -9,7 +9,7 @@ description: Update selected project rules.
 
 `$rule-update` 用于按 `id` 更新当前会话已选用的项目级规则本体。
 
-v0.3 起不存在会话级规则副本。更新会直接修改 `.codex-rules/rules.db` 里的项目规则；其他已经选用同一规则的会话之后会看到最新内容。
+v0.4 起不存在会话级规则副本。更新会直接修改 `.codex-rules/rules.db` 里的项目规则；其他已经选用同一规则的会话之后会看到最新内容。
 
 ## Workflow
 

@@ -30,15 +30,17 @@ use windows::Win32::UI::Controls::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{SetFocus, VK_ESCAPE, VK_RETURN};
 use windows::Win32::UI::WindowsAndMessaging::{
-    ACCEL, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateAcceleratorTableW,
-    CreateWindowExW, DefWindowProcW, DestroyAcceleratorTable, DestroyWindow, DispatchMessageW,
-    ES_AUTOHSCROLL, ES_AUTOVSCROLL, ES_MULTILINE, FVIRTKEY, GWLP_USERDATA, GetClientRect,
-    GetMessageW, GetParent, GetWindowLongPtrW, HMENU, LoadCursorW, MSG, PostQuitMessage,
-    RegisterClassW, SW_RESTORE, SWP_NOZORDER, SendMessageW, SetWindowLongPtrW, SetWindowPos,
-    SetWindowTextW, ShowWindow, TranslateAcceleratorW, TranslateMessage, WINDOW_STYLE, WM_CLOSE,
-    WM_COMMAND, WM_CREATE, WM_CTLCOLORDLG, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC,
-    WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_NOTIFY, WM_PAINT, WM_SETFONT, WM_SIZE, WNDCLASSW,
-    WS_BORDER, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_VISIBLE, WS_VSCROLL,
+    ACCEL, CB_ADDSTRING, CB_GETCURSEL, CB_GETLBTEXT, CB_RESETCONTENT, CB_SETCURSEL,
+    CBS_DROPDOWNLIST, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
+    CreateAcceleratorTableW, CreateWindowExW, DefWindowProcW, DestroyAcceleratorTable,
+    DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL, ES_AUTOVSCROLL, ES_MULTILINE, FVIRTKEY,
+    GWLP_USERDATA, GetClientRect, GetMessageW, GetParent, GetWindowLongPtrW, HMENU, LoadCursorW,
+    MSG, PostQuitMessage, RegisterClassW, SW_RESTORE, SWP_NOZORDER, SendMessageW,
+    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TranslateAcceleratorW,
+    TranslateMessage, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_CTLCOLORDLG,
+    WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC, WM_DESTROY, WM_ERASEBKGND,
+    WM_LBUTTONDOWN, WM_NOTIFY, WM_PAINT, WM_SETFONT, WM_SIZE, WNDCLASSW, WS_BORDER, WS_CHILD,
+    WS_OVERLAPPEDWINDOW, WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::PCWSTR;
 
@@ -51,8 +53,11 @@ const ID_CONTENT: usize = 1006;
 const ID_TAGS: usize = 1007;
 const ID_STATUS: usize = 1008;
 const ID_SAVE_EDIT: usize = 1009;
+const ID_MODULE_FILTER: usize = 1010;
+const ID_MODULE_EDIT: usize = 1011;
 const ACTIVE_STATUS: &str = "active";
 const DEPRECATED_STATUS: &str = "deprecated";
+const GLOBAL_MODULE: &str = "global";
 
 #[derive(Clone, Debug, Deserialize)]
 struct RuleInput {
@@ -63,6 +68,8 @@ struct RuleInput {
     status: String,
     #[serde(default)]
     tags: Vec<String>,
+    #[serde(default = "default_module")]
+    module: String,
     #[serde(default)]
     selected: bool,
 }
@@ -74,11 +81,13 @@ struct RuleItem {
     content: String,
     status: String,
     tags: Vec<String>,
+    module: String,
     selected: bool,
     original_title: String,
     original_content: String,
     original_status: String,
     original_tags: Vec<String>,
+    original_module: String,
     display: String,
     search_text: String,
 }
@@ -102,6 +111,7 @@ struct PickerUpdate {
     content: String,
     tags: Vec<String>,
     status: String,
+    module: String,
 }
 
 #[derive(Serialize)]
@@ -118,6 +128,8 @@ struct DbRule {
     content: String,
     status: String,
     tags: Vec<String>,
+    module: String,
+    module_display_name: String,
     created_at: String,
     updated_at: String,
     picked_count: i64,
@@ -126,12 +138,22 @@ struct DbRule {
     selected: Option<bool>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct RuleModule {
+    slug: String,
+    display_name: String,
+    status: String,
+    created_at: String,
+    updated_at: String,
+}
+
 #[derive(Clone, Debug)]
 struct LegacyRule {
     title: String,
     content: String,
     status: String,
     tags: Vec<String>,
+    module: String,
     created_at: String,
     updated_at: String,
     picked_count: i64,
@@ -151,19 +173,24 @@ struct Context {
 struct CreateParams {
     sender: Sender<PickerAction>,
     rules: Vec<RuleItem>,
+    modules: Vec<RuleModule>,
     initial_query: String,
+    initial_module: String,
 }
 
 struct WindowState {
     sender: Sender<PickerAction>,
     rules: Vec<RuleItem>,
+    modules: Vec<RuleModule>,
     visible_indices: Vec<usize>,
     checked_rule_ids: HashSet<String>,
     search: HWND,
+    module_filter: HWND,
     list: HWND,
     title_edit: HWND,
     content_edit: HWND,
     tags_edit: HWND,
+    module_edit: HWND,
     status_switch: HWND,
     save_button: HWND,
     confirm_button: HWND,
@@ -177,12 +204,14 @@ struct WindowState {
     title_label: HWND,
     hint_label: HWND,
     search_label: HWND,
+    module_filter_label: HWND,
     list_status_label: HWND,
     editor_heading_label: HWND,
     editor_hint_label: HWND,
     title_field_label: HWND,
     content_field_label: HWND,
     tags_field_label: HWND,
+    module_field_label: HWND,
     status_field_label: HWND,
     font_title: HFONT,
 }
@@ -222,8 +251,9 @@ fn run_picker_protocol(args: Vec<String>) -> Result<PickerOutput, String> {
 
     let args = Args::parse(args)?;
     let rules = load_rules(&args.rules_file)?;
+    let modules = modules_for_picker_rules(&rules);
 
-    match run_picker_window(rules, args.query) {
+    match run_picker_window(rules, modules, args.query, String::new()) {
         PickerAction::Pick(result) => Ok(PickerOutput {
             selected_ids: result.selected_ids,
             updates: result.updates,
@@ -293,6 +323,10 @@ fn help_text() -> String {
         "  pick             Select project rules for current session",
         "  check            Open native checklist manager",
         "  scan             Import legacy YAML rules into SQLite",
+        "  module-list      List rule modules",
+        "  module-add       Add rule module",
+        "  module-update    Update rule module",
+        "  module-delete    Delete unused rule module",
     ]
     .join("\n")
 }
@@ -314,6 +348,10 @@ fn run_cli(args: Vec<String>) -> Result<Value, String> {
         "pick" => cli_pick(&options, false),
         "check" => cli_pick(&options, true),
         "scan" => cli_scan(&options),
+        "module-list" => cli_module_list(&options),
+        "module-add" => cli_module_add(&options),
+        "module-update" => cli_module_update(&options),
+        "module-delete" => cli_module_delete(&options),
         value => Err(format!("unknown command: {value}")),
     }
 }
@@ -457,6 +495,14 @@ fn connect_db(context: &Context) -> Result<Connection, String> {
 fn init_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "
+        CREATE TABLE IF NOT EXISTS rule_modules (
+            slug TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('active', 'deprecated')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS rules (
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL,
@@ -470,9 +516,11 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         CREATE TABLE IF NOT EXISTS rule_details (
             rule_id TEXT PRIMARY KEY,
             content TEXT NOT NULL,
+            module_slug TEXT NOT NULL DEFAULT 'global',
             tags_json TEXT NOT NULL DEFAULT '[]',
             search_text TEXT NOT NULL DEFAULT '',
-            FOREIGN KEY (rule_id) REFERENCES rules(id) ON DELETE CASCADE
+            FOREIGN KEY (rule_id) REFERENCES rules(id) ON DELETE CASCADE,
+            FOREIGN KEY (module_slug) REFERENCES rule_modules(slug)
         );
 
         CREATE TABLE IF NOT EXISTS rule_selections (
@@ -485,11 +533,41 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_rules_status ON rules(status);
+        CREATE INDEX IF NOT EXISTS idx_rule_details_module ON rule_details(module_slug);
         CREATE INDEX IF NOT EXISTS idx_rule_selections_session ON rule_selections(session_id);
         CREATE INDEX IF NOT EXISTS idx_rule_selections_rule ON rule_selections(rule_id);
         ",
     )
-    .map_err(|err| err.to_string())
+    .map_err(|err| err.to_string())?;
+    ensure_schema_upgrade(conn)
+}
+
+fn ensure_schema_upgrade(conn: &Connection) -> Result<(), String> {
+    let timestamp = now_text();
+    conn.execute(
+        "INSERT OR IGNORE INTO rule_modules (slug, display_name, status, created_at, updated_at) VALUES ('global', 'Global', 'active', ?, ?)",
+        params![timestamp, timestamp],
+    )
+    .map_err(|err| err.to_string())?;
+
+    let has_module_slug = conn
+        .prepare("PRAGMA table_info(rule_details)")
+        .map_err(|err| err.to_string())?
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|err| err.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| err.to_string())?
+        .iter()
+        .any(|name| name == "module_slug");
+    if !has_module_slug {
+        // v0.3 库没有 module_slug。升级时全部归到 global，保持旧规则仍可见可选。
+        conn.execute(
+            "ALTER TABLE rule_details ADD COLUMN module_slug TEXT NOT NULL DEFAULT 'global'",
+            [],
+        )
+        .map_err(|err| err.to_string())?;
+    }
+    rebuild_all_search_text(conn)
 }
 
 fn normalize_status(raw: &str) -> Result<String, String> {
@@ -516,8 +594,46 @@ fn split_tags(raw: &str) -> Vec<String> {
         })
 }
 
-fn search_text(id: &str, title: &str, content: &str, status: &str, tags: &[String]) -> String {
-    format!("{} {} {} {} {}", id, status, title, content, tags.join(" ")).to_lowercase()
+fn search_text(
+    id: &str,
+    title: &str,
+    content: &str,
+    status: &str,
+    module: &str,
+    tags: &[String],
+) -> String {
+    format!(
+        "{} {} {} {} {} {}",
+        id,
+        status,
+        module,
+        title,
+        content,
+        tags.join(" ")
+    )
+    .to_lowercase()
+}
+
+fn rebuild_all_search_text(conn: &Connection) -> Result<(), String> {
+    let rules = list_rules(conn, true, "", "", &[], "", None)?;
+    for rule in rules {
+        conn.execute(
+            "UPDATE rule_details SET search_text = ? WHERE rule_id = ?",
+            params![
+                search_text(
+                    &rule.id,
+                    &rule.title,
+                    &rule.content,
+                    &rule.status,
+                    &rule.module,
+                    &rule.tags,
+                ),
+                rule.id
+            ],
+        )
+        .map_err(|err| err.to_string())?;
+    }
+    Ok(())
 }
 
 fn generate_rule_id(conn: &Connection) -> Result<String, String> {
@@ -547,6 +663,295 @@ fn parse_tags_json(raw: &str) -> Vec<String> {
     serde_json::from_str::<Vec<String>>(raw).unwrap_or_default()
 }
 
+fn normalize_module_slug(raw: &str) -> Result<String, String> {
+    let slug = raw.trim().to_ascii_lowercase();
+    if slug.is_empty() {
+        return Ok(GLOBAL_MODULE.to_string());
+    }
+    if slug.len() > 64
+        || !slug
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+        || slug.starts_with('-')
+        || slug.ends_with('-')
+        || slug.contains("--")
+    {
+        return Err(
+            "module slug must use lowercase letters, digits, and single hyphens".to_string(),
+        );
+    }
+    Ok(slug)
+}
+
+fn normalize_module_filter(raw: &str) -> Result<String, String> {
+    if raw.trim().is_empty() {
+        Ok(String::new())
+    } else {
+        normalize_module_slug(raw)
+    }
+}
+
+fn default_module() -> String {
+    GLOBAL_MODULE.to_string()
+}
+
+fn default_modules_for_picker() -> Vec<RuleModule> {
+    let timestamp = now_text();
+    vec![RuleModule {
+        slug: GLOBAL_MODULE.to_string(),
+        display_name: "Global".to_string(),
+        status: ACTIVE_STATUS.to_string(),
+        created_at: timestamp.clone(),
+        updated_at: timestamp,
+    }]
+}
+
+fn modules_for_picker_rules(rules: &[RuleItem]) -> Vec<RuleModule> {
+    let mut modules = default_modules_for_picker();
+    let mut seen = modules
+        .iter()
+        .map(|module| module.slug.clone())
+        .collect::<HashSet<_>>();
+    for rule in rules {
+        let Ok(slug) = normalize_module_slug(&rule.module) else {
+            continue;
+        };
+        if seen.insert(slug.clone()) {
+            let timestamp = now_text();
+            modules.push(RuleModule {
+                slug: slug.clone(),
+                display_name: module_display_name_for_slug(&slug).to_string(),
+                status: ACTIVE_STATUS.to_string(),
+                created_at: timestamp.clone(),
+                updated_at: timestamp,
+            });
+        }
+    }
+    modules
+}
+
+fn module_matches_filter(rule_module: &str, module_filter: &str) -> bool {
+    let module_filter = module_filter.trim();
+    if module_filter.is_empty() {
+        return true;
+    }
+    if module_filter == GLOBAL_MODULE {
+        return rule_module == GLOBAL_MODULE;
+    }
+    // 业务模块筛选默认带上 global，避免每个项目都把通用规则复制一遍。
+    rule_module == module_filter || rule_module == GLOBAL_MODULE
+}
+
+fn row_to_module(row: &rusqlite::Row<'_>) -> rusqlite::Result<RuleModule> {
+    Ok(RuleModule {
+        slug: row.get("slug")?,
+        display_name: row.get("display_name")?,
+        status: row.get("status")?,
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
+    })
+}
+
+fn get_module(conn: &Connection, slug: &str) -> Result<RuleModule, String> {
+    let slug = normalize_module_slug(slug)?;
+    conn.query_row(
+        "SELECT slug, display_name, status, created_at, updated_at FROM rule_modules WHERE slug = ?",
+        params![slug],
+        row_to_module,
+    )
+    .optional()
+    .map_err(|err| err.to_string())?
+    .ok_or_else(|| format!("module not found: {slug}"))
+}
+
+fn list_modules(conn: &Connection, include_all: bool) -> Result<Vec<RuleModule>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT slug, display_name, status, created_at, updated_at FROM rule_modules ORDER BY CASE WHEN slug = 'global' THEN 0 ELSE 1 END, slug ASC",
+        )
+        .map_err(|err| err.to_string())?;
+    let rows = stmt
+        .query_map([], row_to_module)
+        .map_err(|err| err.to_string())?;
+    let mut modules = Vec::new();
+    for row in rows {
+        let module = row.map_err(|err| err.to_string())?;
+        if include_all || module.status == ACTIVE_STATUS {
+            modules.push(module);
+        }
+    }
+    Ok(modules)
+}
+
+fn ensure_active_module(conn: &Connection, slug: &str) -> Result<RuleModule, String> {
+    let module = get_module(conn, slug)?;
+    if module.status != ACTIVE_STATUS {
+        return Err(format!("module is deprecated: {}", module.slug));
+    }
+    Ok(module)
+}
+
+fn insert_module(conn: &Connection, slug: &str, display_name: &str) -> Result<RuleModule, String> {
+    let slug = normalize_module_slug(slug)?;
+    let display_name = display_name.trim();
+    if display_name.is_empty() {
+        return Err("module display-name is required".to_string());
+    }
+    let timestamp = now_text();
+    conn.execute(
+        "INSERT INTO rule_modules (slug, display_name, status, created_at, updated_at) VALUES (?, ?, 'active', ?, ?)",
+        params![slug, display_name, timestamp, timestamp],
+    )
+    .map_err(|err| err.to_string())?;
+    get_module(conn, &slug)
+}
+
+fn ensure_module_for_scan(
+    conn: &Connection,
+    slug: &str,
+    display_name: &str,
+) -> Result<RuleModule, String> {
+    let slug = normalize_module_slug(slug)?;
+    if let Ok(module) = get_module(conn, &slug) {
+        return Ok(module);
+    }
+    insert_module(conn, &slug, display_name)
+}
+
+fn inferred_module_from_rule(
+    explicit_module: &str,
+    title: &str,
+    content: &str,
+    tags: &[String],
+) -> Result<(String, String), String> {
+    let explicit_module = explicit_module.trim();
+    if !explicit_module.is_empty() {
+        let slug = normalize_module_slug(explicit_module)?;
+        return Ok((
+            slug.clone(),
+            module_display_name_for_slug(&slug).to_string(),
+        ));
+    }
+
+    let haystack = format!(
+        "{} {} {}",
+        title.to_lowercase(),
+        content.to_lowercase(),
+        tags.join(" ").to_lowercase()
+    );
+    let mappings: [(&str, &str, &[&str]); 7] = [
+        (
+            "frontend",
+            "Frontend",
+            &[
+                "frontend", "ui", "react", "vue", "css", "html", "页面", "组件", "前端", "界面",
+            ],
+        ),
+        (
+            "backend",
+            "Backend",
+            &[
+                "backend",
+                "api",
+                "server",
+                "db",
+                "sql",
+                "database",
+                "接口",
+                "服务端",
+                "后端",
+                "数据库",
+            ],
+        ),
+        ("docs", "Docs", &["docs", "readme", "markdown", "文档"]),
+        (
+            "testing",
+            "Testing",
+            &["test", "testing", "pytest", "jest", "测试"],
+        ),
+        (
+            "workflow",
+            "Workflow",
+            &[
+                "git", "commit", "branch", "pr", "release", "发布", "版本", "tag",
+            ],
+        ),
+        ("output", "Output", &["output", "format", "输出", "格式"]),
+        ("global", "Global", &[]),
+    ];
+
+    for (slug, display_name, keywords) in mappings {
+        if keywords.iter().any(|keyword| haystack.contains(keyword)) {
+            return Ok((slug.to_string(), display_name.to_string()));
+        }
+    }
+    Ok((GLOBAL_MODULE.to_string(), "Global".to_string()))
+}
+
+fn module_display_name_for_slug(slug: &str) -> &str {
+    match slug {
+        "frontend" => "Frontend",
+        "backend" => "Backend",
+        "docs" => "Docs",
+        "testing" => "Testing",
+        "workflow" => "Workflow",
+        "output" => "Output",
+        "global" => "Global",
+        _ => slug,
+    }
+}
+
+fn update_module(
+    conn: &Connection,
+    slug: &str,
+    display_name: &str,
+    status: &str,
+) -> Result<RuleModule, String> {
+    let slug = normalize_module_slug(slug)?;
+    let current = get_module(conn, &slug)?;
+    let new_display_name = if display_name.trim().is_empty() {
+        current.display_name
+    } else {
+        display_name.trim().to_string()
+    };
+    let new_status = if status.trim().is_empty() {
+        current.status
+    } else {
+        normalize_status(status)?
+    };
+    if slug == GLOBAL_MODULE && new_status != ACTIVE_STATUS {
+        return Err("global module cannot be deprecated".to_string());
+    }
+    let timestamp = now_text();
+    conn.execute(
+        "UPDATE rule_modules SET display_name = ?, status = ?, updated_at = ? WHERE slug = ?",
+        params![new_display_name, new_status, timestamp, slug],
+    )
+    .map_err(|err| err.to_string())?;
+    get_module(conn, &slug)
+}
+
+fn delete_module(conn: &Connection, slug: &str) -> Result<RuleModule, String> {
+    let slug = normalize_module_slug(slug)?;
+    if slug == GLOBAL_MODULE {
+        return Err("global module cannot be deleted".to_string());
+    }
+    let current = get_module(conn, &slug)?;
+    let refs: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM rule_details WHERE module_slug = ?",
+            params![slug],
+            |row| row.get(0),
+        )
+        .map_err(|err| err.to_string())?;
+    if refs > 0 {
+        return Err(format!("module is referenced by {refs} rule(s): {slug}"));
+    }
+    conn.execute("DELETE FROM rule_modules WHERE slug = ?", params![slug])
+        .map_err(|err| err.to_string())?;
+    Ok(current)
+}
+
 fn get_selected_ids(conn: &Connection, session_id: &str) -> Result<HashSet<String>, String> {
     if session_id.trim().is_empty() {
         return Ok(HashSet::new());
@@ -572,6 +977,8 @@ fn row_to_rule(row: &rusqlite::Row<'_>, selected: Option<bool>) -> rusqlite::Res
         content: row.get("content")?,
         status: row.get("status")?,
         tags: parse_tags_json(&tags_json),
+        module: row.get("module_slug")?,
+        module_display_name: row.get("module_display_name")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
         picked_count: row.get("picked_count")?,
@@ -584,9 +991,11 @@ fn get_rule(conn: &Connection, id: &str) -> Result<DbRule, String> {
     conn.query_row(
         "
         SELECT r.id, r.title, r.status, r.created_at, r.updated_at, r.picked_count,
-               r.last_picked_at, d.content, d.tags_json, d.search_text
+               r.last_picked_at, d.content, d.tags_json, d.search_text,
+               d.module_slug, m.display_name AS module_display_name
         FROM rules r
         JOIN rule_details d ON d.rule_id = r.id
+        JOIN rule_modules m ON m.slug = d.module_slug
         WHERE r.id = ?
         ",
         params![id.trim()],
@@ -603,6 +1012,7 @@ fn list_rules(
     tag: &str,
     query: &str,
     ids: &[String],
+    module_filter: &str,
     session_id: Option<&str>,
 ) -> Result<Vec<DbRule>, String> {
     let selected_ids = if let Some(session_id) = session_id {
@@ -614,9 +1024,11 @@ fn list_rules(
         .prepare(
             "
             SELECT r.id, r.title, r.status, r.created_at, r.updated_at, r.picked_count,
-                   r.last_picked_at, d.content, d.tags_json, d.search_text
+                   r.last_picked_at, d.content, d.tags_json, d.search_text,
+                   d.module_slug, m.display_name AS module_display_name
             FROM rules r
             JOIN rule_details d ON d.rule_id = r.id
+            JOIN rule_modules m ON m.slug = d.module_slug
             ORDER BY r.created_at ASC, r.id ASC
             ",
         )
@@ -630,6 +1042,10 @@ fn list_rules(
     let wanted_ids = ids.iter().map(String::as_str).collect::<HashSet<_>>();
     let query = query.trim().to_lowercase();
     let tag = tag.trim();
+    let module_filter = normalize_module_filter(module_filter)?;
+    if !module_filter.is_empty() {
+        ensure_active_module(conn, &module_filter)?;
+    }
     let mut rules = Vec::new();
     for row in rows {
         let rule = row.map_err(|err| err.to_string())?;
@@ -642,12 +1058,16 @@ fn list_rules(
         if !tag.is_empty() && !rule.tags.iter().any(|item| item == tag) {
             continue;
         }
+        if !module_matches_filter(&rule.module, &module_filter) {
+            continue;
+        }
         if !query.is_empty() {
             let haystack = search_text(
                 &rule.id,
                 &rule.title,
                 &rule.content,
                 &rule.status,
+                &rule.module,
                 &rule.tags,
             );
             if !haystack.contains(&query) {
@@ -668,9 +1088,11 @@ fn list_selected_rules(
         .prepare(
             "
             SELECT r.id, r.title, r.status, r.created_at, r.updated_at, r.picked_count,
-                   r.last_picked_at, d.content, d.tags_json, d.search_text
+                   r.last_picked_at, d.content, d.tags_json, d.search_text,
+                   d.module_slug, m.display_name AS module_display_name
             FROM rules r
             JOIN rule_details d ON d.rule_id = r.id
+            JOIN rule_modules m ON m.slug = d.module_slug
             JOIN rule_selections s ON s.rule_id = r.id
             WHERE s.session_id = ?
             ORDER BY s.selected_at ASC, r.id ASC
@@ -695,6 +1117,7 @@ fn insert_rule(
     title: &str,
     content: &str,
     tags_raw: &str,
+    module: &str,
 ) -> Result<DbRule, String> {
     let title = title.trim();
     let content = content.trim();
@@ -703,6 +1126,7 @@ fn insert_rule(
     }
     let id = generate_rule_id(conn)?;
     let tags = split_tags(tags_raw);
+    let module = ensure_active_module(conn, module)?.slug;
     let timestamp = now_text();
     conn.execute(
         "INSERT INTO rules (id, title, status, created_at, updated_at, picked_count, last_picked_at) VALUES (?, ?, 'active', ?, ?, 0, '')",
@@ -710,12 +1134,13 @@ fn insert_rule(
     )
     .map_err(|err| err.to_string())?;
     conn.execute(
-        "INSERT INTO rule_details (rule_id, content, tags_json, search_text) VALUES (?, ?, ?, ?)",
+        "INSERT INTO rule_details (rule_id, content, module_slug, tags_json, search_text) VALUES (?, ?, ?, ?, ?)",
         params![
             id,
             content,
+            module,
             serde_json::to_string(&tags).map_err(|err| err.to_string())?,
-            search_text(&id, title, content, ACTIVE_STATUS, &tags)
+            search_text(&id, title, content, ACTIVE_STATUS, &module, &tags)
         ],
     )
     .map_err(|err| err.to_string())?;
@@ -777,11 +1202,16 @@ fn normalize_legacy_rule(
     }
     let status =
         normalize_status(&yaml_string(raw, "status")).unwrap_or_else(|_| ACTIVE_STATUS.to_string());
+    let tags = yaml_tags(raw);
+    let module = inferred_module_from_rule(&yaml_string(raw, "module"), &title, &content, &tags)
+        .map(|(slug, _)| slug)
+        .unwrap_or_else(|_| GLOBAL_MODULE.to_string());
     Some(LegacyRule {
         title,
         content,
         status,
-        tags: yaml_tags(raw),
+        tags,
+        module,
         created_at: yaml_string(raw, "created_at"),
         updated_at: yaml_string(raw, "updated_at"),
         picked_count: yaml_i64(raw, "picked_count"),
@@ -888,6 +1318,9 @@ fn insert_legacy_rule(conn: &Connection, rule: &LegacyRule) -> Result<(DbRule, b
     } else {
         rule.updated_at.clone()
     };
+    let (module, module_display_name) =
+        inferred_module_from_rule(&rule.module, &rule.title, &rule.content, &rule.tags)?;
+    ensure_module_for_scan(conn, &module, &module_display_name)?;
     conn.execute(
         "INSERT INTO rules (id, title, status, created_at, updated_at, picked_count, last_picked_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         params![
@@ -902,12 +1335,13 @@ fn insert_legacy_rule(conn: &Connection, rule: &LegacyRule) -> Result<(DbRule, b
     )
     .map_err(|err| err.to_string())?;
     conn.execute(
-        "INSERT INTO rule_details (rule_id, content, tags_json, search_text) VALUES (?, ?, ?, ?)",
+        "INSERT INTO rule_details (rule_id, content, module_slug, tags_json, search_text) VALUES (?, ?, ?, ?, ?)",
         params![
             id,
             rule.content,
+            module,
             serde_json::to_string(&rule.tags).map_err(|err| err.to_string())?,
-            search_text(&id, &rule.title, &rule.content, &rule.status, &rule.tags)
+            search_text(&id, &rule.title, &rule.content, &rule.status, &module, &rule.tags)
         ],
     )
     .map_err(|err| err.to_string())?;
@@ -944,6 +1378,7 @@ fn update_db_rule(
     content: &str,
     tags: Option<Vec<String>>,
     status: &str,
+    module: &str,
 ) -> Result<DbRule, String> {
     let current = get_rule(conn, id)?;
     let new_title = if title.trim().is_empty() {
@@ -962,6 +1397,11 @@ fn update_db_rule(
     } else {
         normalize_status(status)?
     };
+    let new_module = if module.trim().is_empty() {
+        current.module
+    } else {
+        ensure_active_module(conn, module)?.slug
+    };
     let timestamp = now_text();
     conn.execute(
         "UPDATE rules SET title = ?, status = ?, updated_at = ? WHERE id = ?",
@@ -969,11 +1409,12 @@ fn update_db_rule(
     )
     .map_err(|err| err.to_string())?;
     conn.execute(
-        "UPDATE rule_details SET content = ?, tags_json = ?, search_text = ? WHERE rule_id = ?",
+        "UPDATE rule_details SET content = ?, module_slug = ?, tags_json = ?, search_text = ? WHERE rule_id = ?",
         params![
             new_content,
+            new_module,
             serde_json::to_string(&new_tags).map_err(|err| err.to_string())?,
-            search_text(id.trim(), &new_title, &new_content, &new_status, &new_tags),
+            search_text(id.trim(), &new_title, &new_content, &new_status, &new_module, &new_tags),
             id.trim()
         ],
     )
@@ -988,7 +1429,7 @@ fn deprecate_or_delete_rule(conn: &Connection, id: &str, hard: bool) -> Result<D
             .map_err(|err| err.to_string())?;
         return Ok(current);
     }
-    update_db_rule(conn, &current.id, "", "", None, DEPRECATED_STATUS)
+    update_db_rule(conn, &current.id, "", "", None, DEPRECATED_STATUS, "")
 }
 
 fn select_rules(
@@ -1174,17 +1615,36 @@ fn project_payload(
         "selected_count": selected_rules.map(|rules| rules.len()).unwrap_or(0),
         "selected_rules": selected_rules.unwrap_or(&[]),
         "display_rules": display_source.iter().map(|rule| {
-            format!("{} [{}] {} {}: {}", rule.id, rule.status, rule.tags.join(","), rule.title, rule.content)
+            format!("{} [{}] [{}] {} {}: {}", rule.id, rule.status, rule.module, rule.tags.join(","), rule.title, rule.content)
         }).collect::<Vec<_>>(),
         "rules": rules,
         "session_payload": session_payload_value.unwrap_or(Value::Null),
     })
 }
 
+fn modules_payload(
+    action: &str,
+    context: &Context,
+    modules: &[RuleModule],
+    changed_module: Option<RuleModule>,
+    message: &str,
+) -> Value {
+    json!({
+        "action": action,
+        "project_root": context.project_root.to_string_lossy(),
+        "rules_root": context.rules_root.to_string_lossy(),
+        "db_file": context.db_file.to_string_lossy(),
+        "module_count": modules.len(),
+        "message": message,
+        "changed_module": changed_module,
+        "modules": modules,
+    })
+}
+
 fn cli_add(options: &HashMap<String, String>) -> Result<Value, String> {
     if opt(options, "scope") == "session" {
         return Err(
-            "scope=session is retired in v0.3; use project-level rules and rule-check selection"
+            "scope=session is retired in v0.4; use project-level rules and rule-check selection"
                 .to_string(),
         );
     }
@@ -1197,9 +1657,15 @@ fn cli_add(options: &HashMap<String, String>) -> Result<Value, String> {
     }
     let mut changed = Vec::new();
     for (title, content) in titles.iter().zip(contents.iter()) {
-        changed.push(insert_rule(&conn, title, content, &opt(options, "tags"))?);
+        changed.push(insert_rule(
+            &conn,
+            title,
+            content,
+            &opt(options, "tags"),
+            &opt(options, "module"),
+        )?);
     }
-    let rules = list_rules(&conn, true, "", "", &[], None)?;
+    let rules = list_rules(&conn, true, "", "", &[], "", None)?;
     Ok(project_payload(
         if changed.len() > 1 {
             "add-batch"
@@ -1213,6 +1679,70 @@ fn cli_add(options: &HashMap<String, String>) -> Result<Value, String> {
         "",
         "project rule added",
         None,
+    ))
+}
+
+fn cli_module_list(options: &HashMap<String, String>) -> Result<Value, String> {
+    let context = build_context(options)?;
+    let conn = connect_db(&context)?;
+    let modules = list_modules(&conn, flag(options, "all"))?;
+    Ok(modules_payload(
+        "module-list",
+        &context,
+        &modules,
+        None,
+        "rule modules listed",
+    ))
+}
+
+fn cli_module_add(options: &HashMap<String, String>) -> Result<Value, String> {
+    let context = build_context(options)?;
+    let conn = connect_db(&context)?;
+    let changed = insert_module(
+        &conn,
+        &required(options, "slug")?,
+        &required(options, "display-name")?,
+    )?;
+    let modules = list_modules(&conn, true)?;
+    Ok(modules_payload(
+        "module-add",
+        &context,
+        &modules,
+        Some(changed),
+        "rule module added",
+    ))
+}
+
+fn cli_module_update(options: &HashMap<String, String>) -> Result<Value, String> {
+    let context = build_context(options)?;
+    let conn = connect_db(&context)?;
+    let changed = update_module(
+        &conn,
+        &required(options, "slug")?,
+        &opt(options, "display-name"),
+        &opt(options, "status"),
+    )?;
+    let modules = list_modules(&conn, true)?;
+    Ok(modules_payload(
+        "module-update",
+        &context,
+        &modules,
+        Some(changed),
+        "rule module updated",
+    ))
+}
+
+fn cli_module_delete(options: &HashMap<String, String>) -> Result<Value, String> {
+    let context = build_context(options)?;
+    let conn = connect_db(&context)?;
+    let changed = delete_module(&conn, &required(options, "slug")?)?;
+    let modules = list_modules(&conn, true)?;
+    Ok(modules_payload(
+        "module-delete",
+        &context,
+        &modules,
+        Some(changed),
+        "rule module deleted",
     ))
 }
 
@@ -1261,6 +1791,7 @@ fn cli_update(options: &HashMap<String, String>) -> Result<Value, String> {
         &opt(options, "content"),
         None,
         "",
+        &opt(options, "module"),
     )?;
     let rules = list_selected_rules(&conn, &session_id, false)?;
     Ok(session_payload(
@@ -1322,13 +1853,15 @@ fn cli_project_list(options: &HashMap<String, String>) -> Result<Value, String> 
     } else {
         Some(session_id.as_str())
     };
-    let all_rules = list_rules(&conn, true, "", "", &[], selected_state)?;
+    let module_filter = opt(options, "module");
+    let all_rules = list_rules(&conn, true, "", "", &[], &module_filter, selected_state)?;
     let selected = list_rules(
         &conn,
         flag(options, "all"),
         &opt(options, "tag"),
         &opt(options, "query"),
         &[],
+        &module_filter,
         selected_state,
     )?;
     Ok(project_payload(
@@ -1358,8 +1891,9 @@ fn cli_project_update(options: &HashMap<String, String>) -> Result<Value, String
         &opt(options, "content"),
         tags,
         &opt(options, "status"),
+        &opt(options, "module"),
     )?;
-    let rules = list_rules(&conn, true, "", "", &[], None)?;
+    let rules = list_rules(&conn, true, "", "", &[], "", None)?;
     Ok(project_payload(
         "update",
         &context,
@@ -1377,7 +1911,7 @@ fn cli_project_delete(options: &HashMap<String, String>) -> Result<Value, String
     let conn = connect_db(&context)?;
     let changed =
         deprecate_or_delete_rule(&conn, &required(options, "id")?, flag(options, "hard"))?;
-    let rules = list_rules(&conn, true, "", "", &[], None)?;
+    let rules = list_rules(&conn, true, "", "", &[], "", None)?;
     Ok(project_payload(
         if flag(options, "hard") {
             "delete-hard"
@@ -1432,7 +1966,7 @@ fn cli_scan(options: &HashMap<String, String>) -> Result<Value, String> {
         }
     }
 
-    let rules = list_rules(&conn, true, "", "", &[], None)?;
+    let rules = list_rules(&conn, true, "", "", &[], "", None)?;
     let mut payload = project_payload(
         "scan",
         &context,
@@ -1457,6 +1991,7 @@ fn cli_scan(options: &HashMap<String, String>) -> Result<Value, String> {
                 "legacy_id": rule.legacy_id,
                 "source_file": rule.source_file,
                 "session_id": rule.session_id,
+                "module": rule.module,
                 "title": rule.title,
             }))
             .collect::<Vec<_>>()
@@ -1469,6 +2004,7 @@ fn cli_pick(options: &HashMap<String, String>, force_ui: bool) -> Result<Value, 
     let conn = connect_db(&context)?;
     let session_id = resolve_session_id(&opt(options, "session-id"));
     let ids = split_ids(&opt(options, "ids"));
+    let module_filter = opt(options, "module");
     if force_ui || flag(options, "ui") {
         let visible = list_rules(
             &conn,
@@ -1476,11 +2012,17 @@ fn cli_pick(options: &HashMap<String, String>, force_ui: bool) -> Result<Value, 
             &opt(options, "tag"),
             "",
             &ids,
+            &module_filter,
             Some(&session_id),
         )?;
-        let picker_action = run_picker_window(db_rules_to_items(&visible), opt(options, "query"));
+        let picker_action = run_picker_window(
+            db_rules_to_items(&visible),
+            list_modules(&conn, false)?,
+            opt(options, "query"),
+            module_filter.clone(),
+        );
         let PickerAction::Pick(result) = picker_action else {
-            let all_rules = list_rules(&conn, true, "", "", &[], Some(&session_id))?;
+            let all_rules = list_rules(&conn, true, "", "", &[], "", Some(&session_id))?;
             return Ok(project_payload(
                 "pick-ui-cancel",
                 &context,
@@ -1511,6 +2053,7 @@ fn cli_pick(options: &HashMap<String, String>, force_ui: bool) -> Result<Value, 
                 &update.content,
                 Some(update.tags),
                 &update.status,
+                &update.module,
             )?);
         }
         let selected_ids = result
@@ -1519,7 +2062,7 @@ fn cli_pick(options: &HashMap<String, String>, force_ui: bool) -> Result<Value, 
             .filter(|id| allowed.contains(id.as_str()))
             .collect::<Vec<_>>();
         let selected = select_rules(&conn, &session_id, &selected_ids, true)?;
-        let all_rules = list_rules(&conn, true, "", "", &[], Some(&session_id))?;
+        let all_rules = list_rules(&conn, true, "", "", &[], "", Some(&session_id))?;
         let session_value = session_payload(
             "list",
             &context,
@@ -1545,6 +2088,7 @@ fn cli_pick(options: &HashMap<String, String>, force_ui: bool) -> Result<Value, 
         &opt(options, "tag"),
         &opt(options, "query"),
         &ids,
+        &module_filter,
         None,
     )?;
     if candidates.is_empty() {
@@ -1559,7 +2103,7 @@ fn cli_pick(options: &HashMap<String, String>, force_ui: bool) -> Result<Value, 
             .collect::<Vec<_>>(),
         false,
     )?;
-    let all_rules = list_rules(&conn, true, "", "", &[], Some(&session_id))?;
+    let all_rules = list_rules(&conn, true, "", "", &[], "", Some(&session_id))?;
     let session_value = session_payload(
         "list",
         &context,
@@ -1590,11 +2134,13 @@ fn db_rules_to_items(rules: &[DbRule]) -> Vec<RuleItem> {
                 content: rule.content.clone(),
                 status: rule.status.clone(),
                 tags: rule.tags.clone(),
+                module: rule.module.clone(),
                 selected: rule.selected.unwrap_or(false),
                 original_title: rule.title.clone(),
                 original_content: rule.content.clone(),
                 original_status: rule.status.clone(),
                 original_tags: rule.tags.clone(),
+                original_module: rule.module.clone(),
                 display: String::new(),
                 search_text: String::new(),
             };
@@ -1659,17 +2205,20 @@ fn load_rules(path: &PathBuf) -> Result<Vec<RuleItem>, String> {
             }
 
             let tags = normalize_tags(rule.tags);
+            let module = normalize_module_slug(&rule.module).unwrap_or_else(|_| default_module());
             let mut item = RuleItem {
                 id,
                 title,
                 content,
                 status,
                 tags,
+                module,
                 selected: rule.selected,
                 original_title: String::new(),
                 original_content: String::new(),
                 original_status: String::new(),
                 original_tags: Vec::new(),
+                original_module: String::new(),
                 display: String::new(),
                 search_text: String::new(),
             };
@@ -1677,6 +2226,7 @@ fn load_rules(path: &PathBuf) -> Result<Vec<RuleItem>, String> {
             item.original_content = item.content.clone();
             item.original_status = item.status.clone();
             item.original_tags = item.tags.clone();
+            item.original_module = item.module.clone();
             refresh_rule_text(&mut item);
             Some(item)
         })
@@ -1716,20 +2266,26 @@ fn normalize_tags(raw: Vec<String>) -> Vec<String> {
 fn refresh_rule_text(rule: &mut RuleItem) {
     let tags = rule.tags.join(",");
     rule.display = format!(
-        "{} [{}] [{}] {}: {}",
-        rule.id, rule.status, tags, rule.title, rule.content
+        "{} [{}] [{}] [{}] {}: {}",
+        rule.id, rule.status, rule.module, tags, rule.title, rule.content
     );
     rule.search_text = format!(
-        "{} {} {} {} {}",
+        "{} {} {} {} {} {}",
         rule.id.to_ascii_lowercase(),
         rule.status.to_lowercase(),
+        rule.module.to_lowercase(),
         rule.title.to_lowercase(),
         rule.content.to_lowercase(),
         tags.to_lowercase()
     );
 }
 
-fn run_picker_window(rules: Vec<RuleItem>, initial_query: String) -> PickerAction {
+fn run_picker_window(
+    rules: Vec<RuleItem>,
+    modules: Vec<RuleModule>,
+    initial_query: String,
+    initial_module: String,
+) -> PickerAction {
     let (sender, receiver) = channel();
 
     unsafe {
@@ -1766,7 +2322,9 @@ fn run_picker_window(rules: Vec<RuleItem>, initial_query: String) -> PickerActio
         let params = Box::new(CreateParams {
             sender,
             rules,
+            modules,
             initial_query,
+            initial_module,
         });
         let hwnd = CreateWindowExW(
             Default::default(),
@@ -1878,6 +2436,8 @@ unsafe extern "system" fn wnd_proc(
             );
             let search_label = create_label(hwnd, "搜索项目规则", 18, 66, 220, 22);
             let search = create_edit(hwnd, &params.initial_query, 18, 90, 640, 30, ID_SEARCH);
+            let module_filter_label = create_label(hwnd, "模块筛选", 470, 66, 180, 22);
+            let module_filter = create_combo(hwnd, 470, 90, 188, 220, ID_MODULE_FILTER);
             let list_status_label = create_label(hwnd, "", 18, 128, 640, 22);
             let list = create_list(hwnd, 18, 154, 640, 438, ID_LIST);
             let editor_heading_label = create_label(hwnd, "编辑当前规则", 690, 66, 360, 28);
@@ -1895,6 +2455,8 @@ unsafe extern "system" fn wnd_proc(
             let content_edit = create_multiline_edit(hwnd, "", 690, 226, 372, 228, ID_CONTENT);
             let tags_field_label = create_label(hwnd, "标签（逗号分隔）", 690, 470, 360, 22);
             let tags_edit = create_edit(hwnd, "", 690, 494, 372, 30, ID_TAGS);
+            let module_field_label = create_label(hwnd, "模块", 690, 532, 360, 22);
+            let module_edit = create_combo(hwnd, 690, 556, 240, 220, ID_MODULE_EDIT);
             let status_field_label = create_label(hwnd, "状态", 690, 540, 360, 22);
             let status_switch = create_status_switch(hwnd, 690, 564, 240, 34, ID_STATUS);
             let save_button = create_button(hwnd, "保存编辑", 690, 614, 150, 36, ID_SAVE_EDIT);
@@ -1906,6 +2468,8 @@ unsafe extern "system" fn wnd_proc(
             set_font(hint_label, font);
             set_font(search_label, font);
             set_font(search, font);
+            set_font(module_filter_label, font);
+            set_font(module_filter, font);
             set_font(list_status_label, font);
             set_font(list, font);
             set_font(editor_heading_label, font_title);
@@ -1916,6 +2480,8 @@ unsafe extern "system" fn wnd_proc(
             set_font(content_edit, font);
             set_font(tags_field_label, font);
             set_font(tags_edit, font);
+            set_font(module_field_label, font);
+            set_font(module_edit, font);
             set_font(status_field_label, font);
             set_font(save_button, font);
             set_font(cancel_button, font);
@@ -1924,13 +2490,16 @@ unsafe extern "system" fn wnd_proc(
             let mut state = Box::new(WindowState {
                 sender: params.sender,
                 rules: params.rules,
+                modules: params.modules,
                 visible_indices: Vec::new(),
                 checked_rule_ids: HashSet::new(),
                 search,
+                module_filter,
                 list,
                 title_edit,
                 content_edit,
                 tags_edit,
+                module_edit,
                 status_switch,
                 save_button,
                 confirm_button,
@@ -1945,15 +2514,19 @@ unsafe extern "system" fn wnd_proc(
                 title_label,
                 hint_label,
                 search_label,
+                module_filter_label,
                 list_status_label,
                 editor_heading_label,
                 editor_hint_label,
                 title_field_label,
                 content_field_label,
                 tags_field_label,
+                module_field_label,
                 status_field_label,
             });
-            // v0.3 的勾选状态来自 SQLite 中当前 session 的 rule_selections。
+            populate_module_filter(state.module_filter, &state.modules, &params.initial_module);
+            populate_module_edit(state.module_edit, &state.modules, GLOBAL_MODULE);
+            // v0.4 的勾选状态来自 SQLite 中当前 session 的 rule_selections。
             // UI 只负责展示和回传选择关系，不再把项目规则复制成会话规则快照。
             state.checked_rule_ids = state
                 .rules
@@ -1981,6 +2554,12 @@ unsafe extern "system" fn wnd_proc(
             let state = unsafe { &mut *ptr };
             match id {
                 ID_SEARCH => {
+                    save_editor_to_current_rule(state);
+                    refresh_visible_rules(state);
+                    select_first_visible_rule(state);
+                    load_editor_from_current_selection(state);
+                }
+                ID_MODULE_FILTER => {
                     save_editor_to_current_rule(state);
                     refresh_visible_rules(state);
                     select_first_visible_rule(state);
@@ -2252,6 +2831,7 @@ fn current_switch_status(hwnd: HWND) -> String {
 
 fn refresh_visible_rules(state: &mut WindowState) {
     let query = read_window_text(state.search);
+    let module_filter = read_module_filter(state.module_filter);
     let terms = query
         .to_lowercase()
         .split_whitespace()
@@ -2265,6 +2845,9 @@ fn refresh_visible_rules(state: &mut WindowState) {
 
     for index in 0..state.rules.len() {
         let rule = state.rules[index].clone();
+        if !module_matches_filter(&rule.module, &module_filter) {
+            continue;
+        }
         if !terms.iter().all(|term| rule.search_text.contains(term)) {
             continue;
         }
@@ -2292,6 +2875,7 @@ fn insert_rule_row(state: &WindowState, row_index: usize, rule: &RuleItem) {
         "",
         rule.id.as_str(),
         rule.status.as_str(),
+        rule.module.as_str(),
         tags.as_str(),
         rule.title.as_str(),
         preview.as_str(),
@@ -2306,8 +2890,8 @@ fn insert_rule_row(state: &WindowState, row_index: usize, rule: &RuleItem) {
 
 fn insert_empty_row(list: HWND, message: &str) {
     insert_list_view_item(list, 0, "");
-    set_list_view_subitem(list, 0, 4, message);
     set_list_view_subitem(list, 0, 5, message);
+    set_list_view_subitem(list, 0, 6, message);
     clear_list_view_checkbox(list, 0);
 }
 
@@ -2515,6 +3099,7 @@ fn load_editor_from_current_selection(state: &mut WindowState) {
         set_window_text(state.title_edit, "");
         set_window_text(state.content_edit, "");
         set_window_text(state.tags_edit, "");
+        set_combo_selection_by_slug(state.module_edit, GLOBAL_MODULE);
         state.status_value = "active".to_string();
         invalidate_status_switch(state);
         update_status_label(state);
@@ -2530,6 +3115,7 @@ fn load_editor_from_current_selection(state: &mut WindowState) {
     set_window_text(state.title_edit, &rule.title);
     set_window_text(state.content_edit, &rule.content);
     set_window_text(state.tags_edit, &rule.tags.join(","));
+    set_combo_selection_by_slug(state.module_edit, &rule.module);
     state.status_value = rule.status.clone();
     invalidate_status_switch(state);
     update_status_label(state);
@@ -2545,6 +3131,7 @@ fn save_editor_to_current_rule(state: &mut WindowState) {
     rule.title = read_window_text(state.title_edit).trim().to_string();
     rule.content = read_window_text(state.content_edit).trim().to_string();
     rule.tags = split_ui_tags(&read_window_text(state.tags_edit));
+    rule.module = read_module_edit(state.module_edit);
     rule.status = normalize_ui_status(&state.status_value);
     refresh_rule_text(rule);
     update_status_label(state);
@@ -2604,6 +3191,7 @@ fn collect_updates(state: &WindowState) -> Vec<PickerUpdate> {
                 || rule.content != rule.original_content
                 || rule.status != rule.original_status
                 || rule.tags != rule.original_tags
+                || rule.module != rule.original_module
         })
         .map(|rule| PickerUpdate {
             id: rule.id.clone(),
@@ -2611,6 +3199,7 @@ fn collect_updates(state: &WindowState) -> Vec<PickerUpdate> {
             content: rule.content.clone(),
             tags: rule.tags.clone(),
             status: rule.status.clone(),
+            module: rule.module.clone(),
         })
         .collect()
 }
@@ -2721,9 +3310,10 @@ fn configure_list_view(list: HWND) {
         ("选取", 54),
         ("ID", 96),
         ("状态", 76),
+        ("模块", 96),
         ("标签", 150),
         ("标题", 170),
-        ("内容预览", 360),
+        ("内容预览", 320),
     ];
     for (index, (title, width)) in columns.iter().enumerate() {
         insert_list_view_column(list, index, title, *width);
@@ -2794,6 +3384,142 @@ fn create_status_switch(hwnd: HWND, x: i32, y: i32, width: i32, height: i32, id:
             None,
         )
         .unwrap_or(HWND(null_mut()))
+    }
+}
+
+fn create_combo(hwnd: HWND, x: i32, y: i32, width: i32, height: i32, id: usize) -> HWND {
+    unsafe {
+        CreateWindowExW(
+            Default::default(),
+            PCWSTR(to_wstring("COMBOBOX").as_ptr()),
+            PCWSTR(to_wstring("").as_ptr()),
+            WINDOW_STYLE(WS_CHILD.0 | WS_VISIBLE.0 | WS_BORDER.0 | CBS_DROPDOWNLIST as u32),
+            x,
+            y,
+            width,
+            height,
+            hwnd,
+            HMENU(id as *mut core::ffi::c_void),
+            None,
+            None,
+        )
+        .unwrap_or(HWND(null_mut()))
+    }
+}
+
+fn combo_text(slug: &str, display_name: &str) -> String {
+    format!("{slug} | {display_name}")
+}
+
+fn populate_module_filter(combo: HWND, modules: &[RuleModule], initial_module: &str) {
+    unsafe {
+        let _ = SendMessageW(combo, CB_RESETCONTENT, WPARAM(0), LPARAM(0));
+    }
+    add_combo_item(combo, "all | All Modules");
+    for module in modules {
+        add_combo_item(combo, &combo_text(&module.slug, &module.display_name));
+    }
+    let normalized = normalize_module_filter(initial_module).unwrap_or_default();
+    set_combo_selection_by_slug(combo, &normalized);
+}
+
+fn populate_module_edit(combo: HWND, modules: &[RuleModule], selected_module: &str) {
+    unsafe {
+        let _ = SendMessageW(combo, CB_RESETCONTENT, WPARAM(0), LPARAM(0));
+    }
+    for module in modules {
+        add_combo_item(combo, &combo_text(&module.slug, &module.display_name));
+    }
+    set_combo_selection_by_slug(combo, selected_module);
+}
+
+fn add_combo_item(combo: HWND, text: &str) {
+    let text = to_wstring(text);
+    unsafe {
+        let _ = SendMessageW(
+            combo,
+            CB_ADDSTRING,
+            WPARAM(0),
+            LPARAM(text.as_ptr() as isize),
+        );
+    }
+}
+
+fn read_combo_text(combo: HWND) -> String {
+    let index = unsafe { SendMessageW(combo, CB_GETCURSEL, WPARAM(0), LPARAM(0)).0 };
+    if index < 0 {
+        return String::new();
+    }
+    let mut buffer = vec![0u16; 256];
+    unsafe {
+        let _ = SendMessageW(
+            combo,
+            CB_GETLBTEXT,
+            WPARAM(index as usize),
+            LPARAM(buffer.as_mut_ptr() as isize),
+        );
+    }
+    let len = buffer
+        .iter()
+        .position(|ch| *ch == 0)
+        .unwrap_or(buffer.len());
+    String::from_utf16_lossy(&buffer[..len])
+}
+
+fn slug_from_combo_text(text: &str) -> String {
+    text.split('|')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+fn read_module_filter(combo: HWND) -> String {
+    let slug = slug_from_combo_text(&read_combo_text(combo));
+    if slug == "all" { String::new() } else { slug }
+}
+
+fn read_module_edit(combo: HWND) -> String {
+    let slug = slug_from_combo_text(&read_combo_text(combo));
+    if slug.trim().is_empty() || slug == "all" {
+        GLOBAL_MODULE.to_string()
+    } else {
+        slug
+    }
+}
+
+fn set_combo_selection_by_slug(combo: HWND, slug: &str) {
+    let wanted = if slug.trim().is_empty() { "all" } else { slug };
+    let mut index = 0usize;
+    loop {
+        let mut buffer = vec![0u16; 256];
+        let result = unsafe {
+            SendMessageW(
+                combo,
+                CB_GETLBTEXT,
+                WPARAM(index),
+                LPARAM(buffer.as_mut_ptr() as isize),
+            )
+            .0
+        };
+        if result < 0 {
+            break;
+        }
+        let len = buffer
+            .iter()
+            .position(|ch| *ch == 0)
+            .unwrap_or(buffer.len());
+        let text = String::from_utf16_lossy(&buffer[..len]);
+        if slug_from_combo_text(&text) == wanted {
+            unsafe {
+                let _ = SendMessageW(combo, CB_SETCURSEL, WPARAM(index), LPARAM(0));
+            }
+            return;
+        }
+        index += 1;
+    }
+    unsafe {
+        let _ = SendMessageW(combo, CB_SETCURSEL, WPARAM(0), LPARAM(0));
     }
 }
 
@@ -2872,7 +3598,9 @@ fn apply_layout(hwnd: HWND, state: &WindowState) {
     let save_y = button_y - 44;
     let status_edit_y = save_y - 42;
     let status_label_y = status_edit_y - 24;
-    let tags_edit_y = status_label_y - 42;
+    let module_edit_y = status_label_y - 42;
+    let module_label_y = module_edit_y - 24;
+    let tags_edit_y = module_label_y - 42;
     let tags_label_y = tags_edit_y - 24;
     let content_y = 226;
     let content_h = (tags_label_y - content_y - 12).max(96);
@@ -2880,7 +3608,23 @@ fn apply_layout(hwnd: HWND, state: &WindowState) {
     set_bounds(state.title_label, pad, 18, 220, 32);
     set_bounds(state.hint_label, pad + 234, 24, width - pad * 2 - 234, 24);
     set_bounds(state.search_label, pad, 66, list_w, 22);
-    set_bounds(state.search, pad, 90, list_w, 30);
+    let module_filter_w = 190.min(list_w / 2).max(150);
+    let search_w = (list_w - module_filter_w - 12).max(180);
+    set_bounds(state.search, pad, 90, search_w, 30);
+    set_bounds(
+        state.module_filter_label,
+        pad + search_w + 12,
+        66,
+        module_filter_w,
+        22,
+    );
+    set_bounds(
+        state.module_filter,
+        pad + search_w + 12,
+        90,
+        module_filter_w,
+        220,
+    );
     set_bounds(state.list_status_label, pad, 128, list_w, 22);
     set_bounds(state.list, pad, list_top, list_w, button_y - list_top - 12);
     set_bounds(
@@ -2903,6 +3647,14 @@ fn apply_layout(hwnd: HWND, state: &WindowState) {
     set_bounds(state.content_edit, editor_x, content_y, editor_w, content_h);
     set_bounds(state.tags_field_label, editor_x, tags_label_y, editor_w, 22);
     set_bounds(state.tags_edit, editor_x, tags_edit_y, editor_w, 30);
+    set_bounds(
+        state.module_field_label,
+        editor_x,
+        module_label_y,
+        editor_w,
+        22,
+    );
+    set_bounds(state.module_edit, editor_x, module_edit_y, 248, 220);
     set_bounds(
         state.status_field_label,
         editor_x,

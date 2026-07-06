@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- Added `rule_modules` as the strong enum owner for rule modules, with built-in `global`.
+- Added `$rule-module` / `module-*` commands for planned module governance.
+- Added `module_slug` support to rule details, rule add/update/list/pick/check flows, and search text.
+- Added module filtering to `$rule-check`; business module filters include `global` rules.
+- Added module editing to the native checklist UI.
+- Changed `$rule-scan` to infer modules from legacy YAML rules and auto-create inferred modules deterministically.
+
 ## 0.3.0
 
 - Breaking: replaced `.codex/session-rules` and `.codex/project-rules` YAML storage with `<project_root>/.codex-rules/rules.db`.
