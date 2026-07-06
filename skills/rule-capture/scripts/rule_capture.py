@@ -386,8 +386,10 @@ def build_payload(args: argparse.Namespace, candidates: list[dict[str, Any]], co
     project_root = Path(args.project_root).resolve() if args.project_root else session_rules.detect_project_root(Path.cwd())
     session_id = session_rules.resolve_session_id(args.session_id)
 
-    batch_title = "；".join(candidate["title"] for candidate in candidates)
-    batch_content = "；".join(candidate["content"] for candidate in candidates)
+    # rule-add v0.3 仍保留批量新增，但批量协议只认英文分号。
+    # 中文分号属于自然语言标点，不能再作为结构化分隔符输出。
+    batch_title = ";".join(candidate["title"] for candidate in candidates)
+    batch_content = ";".join(candidate["content"] for candidate in candidates)
     excerpt = normalize_text(context_text)
     if len(excerpt) > 240:
         excerpt = f"{excerpt[:240]}..."

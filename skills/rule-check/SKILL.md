@@ -1,66 +1,60 @@
 ---
 name: rule-check
-description: Check, edit, and pick project rules.
+description: Check, edit, and select project rules.
 ---
 
 # rule-check
 
 ## Overview
 
-`$rule-check` 是项目共享规则库的检查、编辑和选取入口。
+`$rule-check` 是项目级规则库的检查、编辑、废弃、删除和当前会话选用入口。
 
-项目规则库位于 `<project_root>/.codex/project-rules/`。它跨会话共享，但不会自动进入当前会话；需要 `pick` 后才复制为当前会话规则快照。
-
-新增项目规则不归这里维护。新增统一使用 `$rule-add --scope project`，避免“新增规则”出现第二个 owner。
+规则内容只保存在 `<project_root>/.codex-rules/rules.db` 的项目级规则表中；当前会话只保存 `session_id -> rule_id` 的选用关系，不复制规则正文。
 
 ## Commands
 
 ```powershell
-# 将 $skillRoot 设置为当前 SKILL.md 所在目录；从脚本文件执行时可用 $PSScriptRoot。
 $skillRoot = "C:\path\to\rule-system\skills\rule-check"
 $pluginRoot = Resolve-Path (Join-Path $skillRoot "..\..")
-$script = Join-Path $pluginRoot "scripts/project_rules.py"
+$exe = Join-Path $pluginRoot "bin/rule-system.exe"
 
-python $script list
-python $script list --tag output
-python $script list --query "响应式"
-python $script list --all --json
+& $exe project-list
+& $exe project-list --tag output
+& $exe project-list --query "响应式"
+& $exe project-list --all
 
-python $script pick --ui --json
-python $script pick --ui --query "输出格式" --json
+& $exe check
+& $exe check --query "输出格式"
 
-python $script update --id pr-12345678 --content "先改共享 contract，再改调用方"
-python $script update --id pr-12345678 --tags "architecture,contract"
-python $script update --id pr-12345678 --status deprecated --json
+& $exe project-update --id rule-12345678 --content "先改共享 contract，再改调用方"
+& $exe project-update --id rule-12345678 --tags "architecture,contract"
+& $exe project-update --id rule-12345678 --status deprecated
 
-python $script delete --id pr-12345678
-python $script delete --id pr-12345678 --hard --json
+& $exe project-delete --id rule-12345678
+& $exe project-delete --id rule-12345678 --hard
 
-python $script pick --ids pr-12345678,pr-abcdef12
-python $script pick --tag output
-python $script pick --query "响应式" --json
+& $exe pick --ids rule-12345678,rule-abcdef12
+& $exe pick --tag output
+& $exe pick --query "响应式"
 ```
 
 ## Behavior
 
-- 默认需要人工检查、编辑或选取项目规则时，优先使用 `pick --ui` 打开 Windows 原生窗口。
+- 默认需要人工检查、编辑或选择规则时，优先使用 `pick --ui` 打开 Windows 原生 checklist 管理窗口。
 - `list` 默认只展示 `active` 规则；`--all` 包含 `deprecated` 规则。
-- `update` 必须按 `id` 更新，不做标题模糊匹配。
-- `delete` 默认软删除为 `deprecated`；只有用户明确要求彻底删除时才使用 `--hard`。
-- `pick` 只复制 `active` 规则进入当前会话，同一会话已有相同 `content` 时不重复插入。
-- `pick --ui` 在 Windows 上必须始终打开原生 checklist 管理窗口，即使项目规则库为空、没有 active 规则或搜索没有匹配结果；窗口支持模糊查询、复选框多选、编辑当前焦点项目规则。
-- `pick --ui` 展示项目规则管理视图，包含 `active` 和 `deprecated` 规则；确认后先保存编辑，再把仍为 `active` 且已勾选的规则写入当前会话。
-- `pick --ui` 的复选框才表示会被 pick；单击或高亮某行只表示右侧正在编辑该规则，不代表选取。
-- 右侧状态编辑使用 `active` / `deprecated` 胶囊 switch，不允许手写任意状态字符串。
-- 搜索过滤只改变可见行，不清空已勾选规则；未勾选任何规则时点击确认只保存编辑，不写入当前会话。
-- 窗口顶部状态行展示已勾选数量、当前可见数量、总规则数量和当前编辑对象；当搜索刷新后，编辑面板会恢复到可见规则，避免用户误以为高亮行就是已选规则。
-- `pick --ui` 空规则库或空搜索结果也必须弹窗提示，不允许后台静默失败；用户取消窗口时不写入当前会话。
+- `update` 按 `id` 更新项目规则本体；已选用该规则的会话之后会读取最新内容。
+- `delete` 默认把项目规则标记为 `deprecated`；只有用户明确要求彻底删除时才使用 `--hard`。
+- `pick` 不复制规则正文，只更新当前 `session_id` 的选用关系。
+- `pick --ui` 启动时必须按当前 `session_id` 恢复已勾选规则。
+- `pick --ui` 的复选框表示当前会话是否采用该规则；单击或高亮某行只表示右侧正在编辑该规则。
+- 搜索过滤只改变可见行，不清空已勾选规则。
+- 未勾选任何规则时点击确认，表示当前会话不采用任何可见范围内确认后的规则；项目规则本体仍可保存编辑。
+- `deprecated` 规则可显示和编辑，但不会被选用到当前会话。
+- 用户取消窗口时不写规则本体，也不改当前会话选用关系。
 
 ## Guardrails
 
-- 不在 `$rule-check` 里新增项目规则；新增走 `$rule-add --scope project`。
-- 不展示或修改当前会话规则；当前会话规则由 `$rule-list/update/delete` 管。
-- 不追溯修改已经 pick 进会话的规则快照。
-- 不自动 pick 所有项目规则。
-- 不让 picker 直接写 YAML；项目规则落盘必须由 `scripts/project_rules.py` 统一执行。
+- 不创建或读取 `.codex/session-rules`、`.codex/project-rules` 或 `rules.yaml`。
+- `check` 的 UI 和 SQLite 写入都由 `bin/rule-system.exe` 统一执行，不再绕 Python。
+- 不自动选择所有项目规则。
 - 不写长期记忆或 `project-memory`。

@@ -1,7 +1,7 @@
 {
   "name": "rule-system",
-  "version": "0.2.8",
-  "description": "Session-scoped and project-shared rule capture, CRUD, and pick workflows for Codex projects.",
+  "version": "0.3.0",
+  "description": "Project-level SQLite rule library and current-session rule selection workflows for Codex projects.",
   "author": {
     "name": "X1"
   },
@@ -12,14 +12,14 @@
     "codex",
     "plugin",
     "rules",
-    "session-rules",
-    "project-rules"
+    "sqlite",
+    "rule-selections"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Rule System",
-    "shortDescription": "Manage session and project-shared rules.",
-    "longDescription": "Rule System packages session-rule CRUD, project-shared rule libraries, rule picking, display policy, and context capture without mixing rules into long-term memory.",
+    "shortDescription": "Manage project rules and session selections.",
+    "longDescription": "Rule System packages a project-level SQLite rule library, current-session selection management, rule display policy, and context capture without mixing rules into long-term memory.",
     "developerName": "X1",
     "category": "Productivity",
     "capabilities": [
@@ -27,8 +27,8 @@
       "Productivity"
     ],
     "defaultPrompt": [
-      "Manage current-session rules without long-term memory.",
-      "Pick shared project rules into this session.",
+      "Manage project-level rules without long-term memory.",
+      "Select project rules for this session.",
       "Capture explicit requirements as atomic rules."
     ]
   }

@@ -1,12 +1,16 @@
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use serde_json::{Value, json};
+use serde_yaml::Value as YamlValue;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
 use std::os::windows::ffi::OsStrExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::ptr::null_mut;
 use std::sync::mpsc::{Sender, channel};
+use std::time::{SystemTime, UNIX_EPOCH};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CLIP_DEFAULT_PRECIS, CreateFontW, CreatePen, CreateSolidBrush, DEFAULT_CHARSET,
@@ -47,6 +51,8 @@ const ID_CONTENT: usize = 1006;
 const ID_TAGS: usize = 1007;
 const ID_STATUS: usize = 1008;
 const ID_SAVE_EDIT: usize = 1009;
+const ACTIVE_STATUS: &str = "active";
+const DEPRECATED_STATUS: &str = "deprecated";
 
 #[derive(Clone, Debug, Deserialize)]
 struct RuleInput {
@@ -57,6 +63,8 @@ struct RuleInput {
     status: String,
     #[serde(default)]
     tags: Vec<String>,
+    #[serde(default)]
+    selected: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -66,6 +74,7 @@ struct RuleItem {
     content: String,
     status: String,
     tags: Vec<String>,
+    selected: bool,
     original_title: String,
     original_content: String,
     original_status: String,
@@ -100,6 +109,43 @@ struct PickerOutput {
     selected_ids: Vec<String>,
     updates: Vec<PickerUpdate>,
     cancelled: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DbRule {
+    id: String,
+    title: String,
+    content: String,
+    status: String,
+    tags: Vec<String>,
+    created_at: String,
+    updated_at: String,
+    picked_count: i64,
+    last_picked_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selected: Option<bool>,
+}
+
+#[derive(Clone, Debug)]
+struct LegacyRule {
+    title: String,
+    content: String,
+    status: String,
+    tags: Vec<String>,
+    created_at: String,
+    updated_at: String,
+    picked_count: i64,
+    last_picked_at: String,
+    legacy_id: String,
+    source_file: String,
+    session_id: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct Context {
+    project_root: PathBuf,
+    rules_root: PathBuf,
+    db_file: PathBuf,
 }
 
 struct CreateParams {
@@ -142,15 +188,9 @@ struct WindowState {
 }
 
 fn main() {
-    let result = run();
+    let result = run_app();
     match result {
-        Ok(output) => {
-            println!(
-                "{}",
-                serde_json::to_string(&output)
-                    .unwrap_or_else(|_| { "{\"selected_ids\":[],\"cancelled\":true}".to_string() })
-            );
-        }
+        Ok(output) => println!("{output}"),
         Err(err) => {
             eprintln!("{err}");
             std::process::exit(1);
@@ -158,12 +198,29 @@ fn main() {
     }
 }
 
-fn run() -> Result<PickerOutput, String> {
+fn run_app() -> Result<String, String> {
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    if args.first().is_some_and(|value| value == "--rules") {
+        let output = run_picker_protocol(args)?;
+        return serde_json::to_string(&output).map_err(|err| err.to_string());
+    }
+    if args.is_empty()
+        || args
+            .first()
+            .is_some_and(|value| matches!(value.as_str(), "-h" | "--help"))
+    {
+        return Ok(help_text());
+    }
+    let payload = run_cli(args)?;
+    serde_json::to_string_pretty(&payload).map_err(|err| err.to_string())
+}
+
+fn run_picker_protocol(args: Vec<String>) -> Result<PickerOutput, String> {
     if let Some(output) = headless_output_from_env() {
         return Ok(output);
     }
 
-    let args = Args::parse(env::args().skip(1).collect())?;
+    let args = Args::parse(args)?;
     let rules = load_rules(&args.rules_file)?;
 
     match run_picker_window(rules, args.query) {
@@ -208,7 +265,7 @@ impl Args {
                 }
                 "--help" | "-h" => {
                     return Err(
-                        "Usage: rule-picker-win --rules <rules.json> [--query <text>]".to_string(),
+                        "Usage: rule-system --rules <rules.json> [--query <text>]".to_string()
                     );
                 }
                 value => return Err(format!("Unknown argument: {value}")),
@@ -219,6 +276,1332 @@ impl Args {
         let rules_file = rules_file.ok_or_else(|| "--rules is required".to_string())?;
         Ok(Self { rules_file, query })
     }
+}
+
+fn help_text() -> String {
+    [
+        "Usage: rule-system <command> [options]",
+        "",
+        "Commands:",
+        "  add              Add project-level rule",
+        "  list             List rules selected by current session",
+        "  update           Update selected project rule",
+        "  delete           Unselect rule from current session",
+        "  project-list     List project-level rules",
+        "  project-update   Update project-level rule",
+        "  project-delete   Deprecate or hard-delete project-level rule",
+        "  pick             Select project rules for current session",
+        "  check            Open native checklist manager",
+        "  scan             Import legacy YAML rules into SQLite",
+    ]
+    .join("\n")
+}
+
+fn run_cli(args: Vec<String>) -> Result<Value, String> {
+    let command = args
+        .first()
+        .ok_or_else(|| "command is required".to_string())?
+        .to_string();
+    let options = parse_options(&args[1..])?;
+    match command.as_str() {
+        "add" => cli_add(&options),
+        "list" => cli_list(&options),
+        "update" => cli_update(&options),
+        "delete" => cli_delete(&options),
+        "project-list" => cli_project_list(&options),
+        "project-update" => cli_project_update(&options),
+        "project-delete" => cli_project_delete(&options),
+        "pick" => cli_pick(&options, false),
+        "check" => cli_pick(&options, true),
+        "scan" => cli_scan(&options),
+        value => Err(format!("unknown command: {value}")),
+    }
+}
+
+fn parse_options(args: &[String]) -> Result<HashMap<String, String>, String> {
+    let mut options = HashMap::new();
+    let mut index = 0usize;
+    while index < args.len() {
+        let key = args[index].as_str();
+        if !key.starts_with("--") {
+            return Err(format!("unexpected argument: {key}"));
+        }
+        let name = key.trim_start_matches("--").to_string();
+        if matches!(
+            name.as_str(),
+            "json" | "all" | "hard" | "ui" | "project-only"
+        ) {
+            options.insert(name, "true".to_string());
+            index += 1;
+            continue;
+        }
+        index += 1;
+        let value = args
+            .get(index)
+            .ok_or_else(|| format!("--{name} requires a value"))?
+            .to_string();
+        options.insert(name, value);
+        index += 1;
+    }
+    Ok(options)
+}
+
+fn opt(options: &HashMap<String, String>, name: &str) -> String {
+    options.get(name).cloned().unwrap_or_default()
+}
+
+fn flag(options: &HashMap<String, String>, name: &str) -> bool {
+    matches!(
+        options
+            .get(name)
+            .map(|value| value.trim().to_ascii_lowercase()),
+        Some(value) if matches!(value.as_str(), "1" | "true" | "yes")
+    )
+}
+
+fn required(options: &HashMap<String, String>, name: &str) -> Result<String, String> {
+    let value = opt(options, name);
+    if value.trim().is_empty() {
+        return Err(format!("--{name} is required"));
+    }
+    Ok(value)
+}
+
+fn now_text() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs().to_string())
+        .unwrap_or_else(|_| "0".to_string())
+}
+
+fn sanitize_segment(value: &str) -> String {
+    let mut output = String::new();
+    let mut last_dash = false;
+    for ch in value.trim().chars() {
+        let allowed = ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-');
+        if allowed {
+            output.push(ch);
+            last_dash = false;
+        } else if !last_dash {
+            output.push('-');
+            last_dash = true;
+        }
+    }
+    let cleaned = output.trim_matches('-').to_string();
+    if cleaned.is_empty() {
+        "unknown-session".to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn resolve_session_id(raw: &str) -> String {
+    if !raw.trim().is_empty() {
+        return sanitize_segment(raw);
+    }
+    for key in ["CODEX_THREAD_ID", "WT_SESSION", "SESSIONNAME"] {
+        if let Ok(value) = env::var(key) {
+            if !value.trim().is_empty() {
+                return sanitize_segment(&value);
+            }
+        }
+    }
+    sanitize_segment(&format!("session-{}", now_text()))
+}
+
+fn detect_project_root(start: &Path) -> PathBuf {
+    let mut current = if start.is_file() {
+        start.parent().unwrap_or(start).to_path_buf()
+    } else {
+        start.to_path_buf()
+    };
+    current = current.canonicalize().unwrap_or(current);
+    for candidate in current.ancestors() {
+        if candidate.join(".git").exists()
+            || candidate.join("AGENTS.md").exists()
+            || candidate.join(".codex-rules").exists()
+            || candidate.join(".codex").exists()
+        {
+            return candidate.to_path_buf();
+        }
+    }
+    current
+}
+
+fn build_context(options: &HashMap<String, String>) -> Result<Context, String> {
+    let project_root = if opt(options, "project-root").trim().is_empty() {
+        detect_project_root(&env::current_dir().map_err(|err| err.to_string())?)
+    } else {
+        PathBuf::from(opt(options, "project-root"))
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(opt(options, "project-root")))
+    };
+    let rules_root = project_root.join(".codex-rules");
+    let db_file = rules_root.join("rules.db");
+    Ok(Context {
+        project_root,
+        rules_root,
+        db_file,
+    })
+}
+
+fn connect_db(context: &Context) -> Result<Connection, String> {
+    fs::create_dir_all(&context.rules_root).map_err(|err| err.to_string())?;
+    let conn = Connection::open(&context.db_file).map_err(|err| err.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|err| err.to_string())?;
+    init_schema(&conn)?;
+    Ok(conn)
+}
+
+fn init_schema(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS rules (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('active', 'deprecated')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            picked_count INTEGER NOT NULL DEFAULT 0,
+            last_picked_at TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE IF NOT EXISTS rule_details (
+            rule_id TEXT PRIMARY KEY,
+            content TEXT NOT NULL,
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            search_text TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (rule_id) REFERENCES rules(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS rule_selections (
+            session_id TEXT NOT NULL,
+            rule_id TEXT NOT NULL,
+            selected_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (session_id, rule_id),
+            FOREIGN KEY (rule_id) REFERENCES rules(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_rules_status ON rules(status);
+        CREATE INDEX IF NOT EXISTS idx_rule_selections_session ON rule_selections(session_id);
+        CREATE INDEX IF NOT EXISTS idx_rule_selections_rule ON rule_selections(rule_id);
+        ",
+    )
+    .map_err(|err| err.to_string())
+}
+
+fn normalize_status(raw: &str) -> Result<String, String> {
+    let status = raw.trim().to_ascii_lowercase();
+    if status.is_empty() {
+        return Ok(ACTIVE_STATUS.to_string());
+    }
+    match status.as_str() {
+        ACTIVE_STATUS | DEPRECATED_STATUS => Ok(status),
+        _ => Err("status must be one of: active, deprecated".to_string()),
+    }
+}
+
+fn split_tags(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .fold(Vec::new(), |mut tags, tag| {
+            let normalized = tag.split_whitespace().collect::<Vec<_>>().join("-");
+            if !tags.iter().any(|existing| existing == &normalized) {
+                tags.push(normalized);
+            }
+            tags
+        })
+}
+
+fn search_text(id: &str, title: &str, content: &str, status: &str, tags: &[String]) -> String {
+    format!("{} {} {} {} {}", id, status, title, content, tags.join(" ")).to_lowercase()
+}
+
+fn generate_rule_id(conn: &Connection) -> Result<String, String> {
+    for index in 0..1000u32 {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let id = format!(
+            "rule-{:08x}",
+            ((nanos as u64).wrapping_add(index as u64)) & 0xffff_ffff
+        );
+        let exists: Option<i32> = conn
+            .query_row("SELECT 1 FROM rules WHERE id = ?", params![id], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(|err| err.to_string())?;
+        if exists.is_none() {
+            return Ok(id);
+        }
+    }
+    Err("failed to generate rule id".to_string())
+}
+
+fn parse_tags_json(raw: &str) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(raw).unwrap_or_default()
+}
+
+fn get_selected_ids(conn: &Connection, session_id: &str) -> Result<HashSet<String>, String> {
+    if session_id.trim().is_empty() {
+        return Ok(HashSet::new());
+    }
+    let mut stmt = conn
+        .prepare("SELECT rule_id FROM rule_selections WHERE session_id = ?")
+        .map_err(|err| err.to_string())?;
+    let rows = stmt
+        .query_map(params![session_id], |row| row.get::<_, String>(0))
+        .map_err(|err| err.to_string())?;
+    let mut ids = HashSet::new();
+    for row in rows {
+        ids.insert(row.map_err(|err| err.to_string())?);
+    }
+    Ok(ids)
+}
+
+fn row_to_rule(row: &rusqlite::Row<'_>, selected: Option<bool>) -> rusqlite::Result<DbRule> {
+    let tags_json: String = row.get("tags_json")?;
+    Ok(DbRule {
+        id: row.get("id")?,
+        title: row.get("title")?,
+        content: row.get("content")?,
+        status: row.get("status")?,
+        tags: parse_tags_json(&tags_json),
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
+        picked_count: row.get("picked_count")?,
+        last_picked_at: row.get("last_picked_at")?,
+        selected,
+    })
+}
+
+fn get_rule(conn: &Connection, id: &str) -> Result<DbRule, String> {
+    conn.query_row(
+        "
+        SELECT r.id, r.title, r.status, r.created_at, r.updated_at, r.picked_count,
+               r.last_picked_at, d.content, d.tags_json, d.search_text
+        FROM rules r
+        JOIN rule_details d ON d.rule_id = r.id
+        WHERE r.id = ?
+        ",
+        params![id.trim()],
+        |row| row_to_rule(row, None),
+    )
+    .optional()
+    .map_err(|err| err.to_string())?
+    .ok_or_else(|| format!("rule not found: {}", id.trim()))
+}
+
+fn list_rules(
+    conn: &Connection,
+    include_all: bool,
+    tag: &str,
+    query: &str,
+    ids: &[String],
+    session_id: Option<&str>,
+) -> Result<Vec<DbRule>, String> {
+    let selected_ids = if let Some(session_id) = session_id {
+        get_selected_ids(conn, session_id)?
+    } else {
+        HashSet::new()
+    };
+    let mut stmt = conn
+        .prepare(
+            "
+            SELECT r.id, r.title, r.status, r.created_at, r.updated_at, r.picked_count,
+                   r.last_picked_at, d.content, d.tags_json, d.search_text
+            FROM rules r
+            JOIN rule_details d ON d.rule_id = r.id
+            ORDER BY r.created_at ASC, r.id ASC
+            ",
+        )
+        .map_err(|err| err.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            let id: String = row.get("id")?;
+            row_to_rule(row, session_id.map(|_| selected_ids.contains(&id)))
+        })
+        .map_err(|err| err.to_string())?;
+    let wanted_ids = ids.iter().map(String::as_str).collect::<HashSet<_>>();
+    let query = query.trim().to_lowercase();
+    let tag = tag.trim();
+    let mut rules = Vec::new();
+    for row in rows {
+        let rule = row.map_err(|err| err.to_string())?;
+        if !include_all && rule.status != ACTIVE_STATUS {
+            continue;
+        }
+        if !wanted_ids.is_empty() && !wanted_ids.contains(rule.id.as_str()) {
+            continue;
+        }
+        if !tag.is_empty() && !rule.tags.iter().any(|item| item == tag) {
+            continue;
+        }
+        if !query.is_empty() {
+            let haystack = search_text(
+                &rule.id,
+                &rule.title,
+                &rule.content,
+                &rule.status,
+                &rule.tags,
+            );
+            if !haystack.contains(&query) {
+                continue;
+            }
+        }
+        rules.push(rule);
+    }
+    Ok(rules)
+}
+
+fn list_selected_rules(
+    conn: &Connection,
+    session_id: &str,
+    include_deprecated: bool,
+) -> Result<Vec<DbRule>, String> {
+    let mut stmt = conn
+        .prepare(
+            "
+            SELECT r.id, r.title, r.status, r.created_at, r.updated_at, r.picked_count,
+                   r.last_picked_at, d.content, d.tags_json, d.search_text
+            FROM rules r
+            JOIN rule_details d ON d.rule_id = r.id
+            JOIN rule_selections s ON s.rule_id = r.id
+            WHERE s.session_id = ?
+            ORDER BY s.selected_at ASC, r.id ASC
+            ",
+        )
+        .map_err(|err| err.to_string())?;
+    let rows = stmt
+        .query_map(params![session_id], |row| row_to_rule(row, Some(true)))
+        .map_err(|err| err.to_string())?;
+    let mut rules = Vec::new();
+    for row in rows {
+        let rule = row.map_err(|err| err.to_string())?;
+        if include_deprecated || rule.status == ACTIVE_STATUS {
+            rules.push(rule);
+        }
+    }
+    Ok(rules)
+}
+
+fn insert_rule(
+    conn: &Connection,
+    title: &str,
+    content: &str,
+    tags_raw: &str,
+) -> Result<DbRule, String> {
+    let title = title.trim();
+    let content = content.trim();
+    if title.is_empty() || content.is_empty() {
+        return Err("title and content are required".to_string());
+    }
+    let id = generate_rule_id(conn)?;
+    let tags = split_tags(tags_raw);
+    let timestamp = now_text();
+    conn.execute(
+        "INSERT INTO rules (id, title, status, created_at, updated_at, picked_count, last_picked_at) VALUES (?, ?, 'active', ?, ?, 0, '')",
+        params![id, title, timestamp, timestamp],
+    )
+    .map_err(|err| err.to_string())?;
+    conn.execute(
+        "INSERT INTO rule_details (rule_id, content, tags_json, search_text) VALUES (?, ?, ?, ?)",
+        params![
+            id,
+            content,
+            serde_json::to_string(&tags).map_err(|err| err.to_string())?,
+            search_text(&id, title, content, ACTIVE_STATUS, &tags)
+        ],
+    )
+    .map_err(|err| err.to_string())?;
+    get_rule(conn, &id)
+}
+
+fn yaml_string(value: &YamlValue, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(|item| match item {
+            YamlValue::String(text) => Some(text.trim().to_string()),
+            YamlValue::Number(number) => Some(number.to_string()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+fn yaml_i64(value: &YamlValue, key: &str) -> i64 {
+    value
+        .get(key)
+        .and_then(|item| match item {
+            YamlValue::Number(number) => number.as_i64(),
+            YamlValue::String(text) => text.trim().parse::<i64>().ok(),
+            _ => None,
+        })
+        .unwrap_or(0)
+        .max(0)
+}
+
+fn yaml_tags(value: &YamlValue) -> Vec<String> {
+    match value.get("tags") {
+        Some(YamlValue::Sequence(items)) => normalize_tags(
+            items
+                .iter()
+                .filter_map(|item| match item {
+                    YamlValue::String(text) => Some(text.to_string()),
+                    YamlValue::Number(number) => Some(number.to_string()),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        Some(YamlValue::String(text)) => split_tags(text),
+        _ => Vec::new(),
+    }
+}
+
+fn normalize_legacy_rule(
+    raw: &YamlValue,
+    source_file: &Path,
+    session_id: Option<String>,
+) -> Option<LegacyRule> {
+    if !matches!(raw, YamlValue::Mapping(_)) {
+        return None;
+    }
+    let title = yaml_string(raw, "title");
+    let content = yaml_string(raw, "content");
+    if title.is_empty() || content.is_empty() {
+        return None;
+    }
+    let status =
+        normalize_status(&yaml_string(raw, "status")).unwrap_or_else(|_| ACTIVE_STATUS.to_string());
+    Some(LegacyRule {
+        title,
+        content,
+        status,
+        tags: yaml_tags(raw),
+        created_at: yaml_string(raw, "created_at"),
+        updated_at: yaml_string(raw, "updated_at"),
+        picked_count: yaml_i64(raw, "picked_count"),
+        last_picked_at: yaml_string(raw, "last_picked_at"),
+        legacy_id: yaml_string(raw, "id"),
+        source_file: source_file.to_string_lossy().to_string(),
+        session_id,
+    })
+}
+
+fn legacy_rules_from_file(
+    path: &Path,
+    session_id: Option<String>,
+) -> Result<Vec<LegacyRule>, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let payload: YamlValue = serde_yaml::from_str(&content)
+        .map_err(|err| format!("failed to parse YAML {}: {err}", path.display()))?;
+    let raw_rules = match payload.get("rules") {
+        Some(YamlValue::Sequence(rules)) => rules.clone(),
+        _ => match payload {
+            YamlValue::Sequence(rules) => rules,
+            _ => Vec::new(),
+        },
+    };
+    Ok(raw_rules
+        .iter()
+        .filter_map(|raw| normalize_legacy_rule(raw, path, session_id.clone()))
+        .collect())
+}
+
+fn scan_legacy_yaml_files(
+    context: &Context,
+    source_root: &Path,
+    include_sessions: bool,
+) -> Result<Vec<LegacyRule>, String> {
+    let mut rules = Vec::new();
+    let project_rules_file = source_root.join("project-rules").join("rules.yaml");
+    if project_rules_file.exists() {
+        rules.extend(legacy_rules_from_file(&project_rules_file, None)?);
+    }
+
+    if include_sessions {
+        let session_rules_root = source_root.join("session-rules");
+        if session_rules_root.exists() {
+            for entry in fs::read_dir(&session_rules_root).map_err(|err| err.to_string())? {
+                let entry = entry.map_err(|err| err.to_string())?;
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let session_id = path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .map(sanitize_segment)
+                    .unwrap_or_else(|| "unknown-session".to_string());
+                let rules_file = path.join("rules.yaml");
+                if rules_file.exists() {
+                    rules.extend(legacy_rules_from_file(&rules_file, Some(session_id))?);
+                }
+            }
+        }
+    }
+
+    // 显式导入工具只读取旧 `.codex` 下的 YAML；新 SQLite 目录绝不作为扫描源，
+    // 否则一边迁移一边回读新库，等于把 source-of-truth 搅成东北乱炖。
+    rules.retain(|rule| !Path::new(&rule.source_file).starts_with(&context.rules_root));
+    Ok(rules)
+}
+
+fn find_duplicate_rule(
+    conn: &Connection,
+    title: &str,
+    content: &str,
+) -> Result<Option<String>, String> {
+    conn.query_row(
+        "
+        SELECT r.id
+        FROM rules r
+        JOIN rule_details d ON d.rule_id = r.id
+        WHERE r.title = ? AND d.content = ?
+        ORDER BY r.created_at ASC, r.id ASC
+        LIMIT 1
+        ",
+        params![title.trim(), content.trim()],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .map_err(|err| err.to_string())
+}
+
+fn insert_legacy_rule(conn: &Connection, rule: &LegacyRule) -> Result<(DbRule, bool), String> {
+    if let Some(existing_id) = find_duplicate_rule(conn, &rule.title, &rule.content)? {
+        return Ok((get_rule(conn, &existing_id)?, false));
+    }
+    let id = generate_rule_id(conn)?;
+    let created_at = if rule.created_at.trim().is_empty() {
+        now_text()
+    } else {
+        rule.created_at.clone()
+    };
+    let updated_at = if rule.updated_at.trim().is_empty() {
+        created_at.clone()
+    } else {
+        rule.updated_at.clone()
+    };
+    conn.execute(
+        "INSERT INTO rules (id, title, status, created_at, updated_at, picked_count, last_picked_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        params![
+            id,
+            rule.title,
+            rule.status,
+            created_at,
+            updated_at,
+            rule.picked_count,
+            rule.last_picked_at
+        ],
+    )
+    .map_err(|err| err.to_string())?;
+    conn.execute(
+        "INSERT INTO rule_details (rule_id, content, tags_json, search_text) VALUES (?, ?, ?, ?)",
+        params![
+            id,
+            rule.content,
+            serde_json::to_string(&rule.tags).map_err(|err| err.to_string())?,
+            search_text(&id, &rule.title, &rule.content, &rule.status, &rule.tags)
+        ],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok((get_rule(conn, &id)?, true))
+}
+
+fn select_existing_rule_for_session(
+    conn: &Connection,
+    session_id: &str,
+    rule_id: &str,
+) -> Result<bool, String> {
+    let existing = get_selected_ids(conn, session_id)?;
+    if existing.contains(rule_id) {
+        return Ok(false);
+    }
+    let timestamp = now_text();
+    conn.execute(
+        "INSERT INTO rule_selections (session_id, rule_id, selected_at, updated_at) VALUES (?, ?, ?, ?)",
+        params![session_id, rule_id, timestamp, timestamp],
+    )
+    .map_err(|err| err.to_string())?;
+    conn.execute(
+        "UPDATE rules SET picked_count = picked_count + 1, last_picked_at = ?, updated_at = ? WHERE id = ?",
+        params![timestamp, timestamp, rule_id],
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(true)
+}
+
+fn update_db_rule(
+    conn: &Connection,
+    id: &str,
+    title: &str,
+    content: &str,
+    tags: Option<Vec<String>>,
+    status: &str,
+) -> Result<DbRule, String> {
+    let current = get_rule(conn, id)?;
+    let new_title = if title.trim().is_empty() {
+        current.title
+    } else {
+        title.trim().to_string()
+    };
+    let new_content = if content.trim().is_empty() {
+        current.content
+    } else {
+        content.trim().to_string()
+    };
+    let new_tags = tags.unwrap_or(current.tags);
+    let new_status = if status.trim().is_empty() {
+        current.status
+    } else {
+        normalize_status(status)?
+    };
+    let timestamp = now_text();
+    conn.execute(
+        "UPDATE rules SET title = ?, status = ?, updated_at = ? WHERE id = ?",
+        params![new_title, new_status, timestamp, id.trim()],
+    )
+    .map_err(|err| err.to_string())?;
+    conn.execute(
+        "UPDATE rule_details SET content = ?, tags_json = ?, search_text = ? WHERE rule_id = ?",
+        params![
+            new_content,
+            serde_json::to_string(&new_tags).map_err(|err| err.to_string())?,
+            search_text(id.trim(), &new_title, &new_content, &new_status, &new_tags),
+            id.trim()
+        ],
+    )
+    .map_err(|err| err.to_string())?;
+    get_rule(conn, id)
+}
+
+fn deprecate_or_delete_rule(conn: &Connection, id: &str, hard: bool) -> Result<DbRule, String> {
+    let current = get_rule(conn, id)?;
+    if hard {
+        conn.execute("DELETE FROM rules WHERE id = ?", params![current.id])
+            .map_err(|err| err.to_string())?;
+        return Ok(current);
+    }
+    update_db_rule(conn, &current.id, "", "", None, DEPRECATED_STATUS)
+}
+
+fn select_rules(
+    conn: &Connection,
+    session_id: &str,
+    ids: &[String],
+    replace: bool,
+) -> Result<Vec<DbRule>, String> {
+    let existing = get_selected_ids(conn, session_id)?;
+    let wanted = ids.iter().map(String::as_str).collect::<HashSet<_>>();
+    let timestamp = now_text();
+    if replace {
+        for stale in existing.iter().filter(|id| !wanted.contains(id.as_str())) {
+            conn.execute(
+                "DELETE FROM rule_selections WHERE session_id = ? AND rule_id = ?",
+                params![session_id, stale],
+            )
+            .map_err(|err| err.to_string())?;
+        }
+    }
+    for id in ids {
+        let rule = get_rule(conn, id)?;
+        if rule.status != ACTIVE_STATUS {
+            continue;
+        }
+        if existing.contains(&rule.id) {
+            conn.execute(
+                "UPDATE rule_selections SET updated_at = ? WHERE session_id = ? AND rule_id = ?",
+                params![timestamp, session_id, rule.id],
+            )
+            .map_err(|err| err.to_string())?;
+        } else {
+            conn.execute(
+                "INSERT INTO rule_selections (session_id, rule_id, selected_at, updated_at) VALUES (?, ?, ?, ?)",
+                params![session_id, rule.id, timestamp, timestamp],
+            )
+            .map_err(|err| err.to_string())?;
+            conn.execute(
+                "UPDATE rules SET picked_count = picked_count + 1, last_picked_at = ?, updated_at = ? WHERE id = ?",
+                params![timestamp, timestamp, rule.id],
+            )
+            .map_err(|err| err.to_string())?;
+        }
+    }
+    list_selected_rules(conn, session_id, false)
+}
+
+fn unselect_rules(
+    conn: &Connection,
+    session_id: &str,
+    ids: &[String],
+) -> Result<Vec<DbRule>, String> {
+    if ids.is_empty() {
+        conn.execute(
+            "DELETE FROM rule_selections WHERE session_id = ?",
+            params![session_id],
+        )
+        .map_err(|err| err.to_string())?;
+    } else {
+        for id in ids {
+            conn.execute(
+                "DELETE FROM rule_selections WHERE session_id = ? AND rule_id = ?",
+                params![session_id, id],
+            )
+            .map_err(|err| err.to_string())?;
+        }
+    }
+    list_selected_rules(conn, session_id, false)
+}
+
+fn split_ids(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn split_batch(raw: &str) -> Vec<String> {
+    if !raw.contains(';') {
+        let value = raw.trim();
+        return if value.is_empty() {
+            Vec::new()
+        } else {
+            vec![value.to_string()]
+        };
+    }
+    raw.split(';')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn context_json(context: &Context) -> Value {
+    json!({
+        "project_root": context.project_root.to_string_lossy(),
+        "rules_root": context.rules_root.to_string_lossy(),
+        "db_file": context.db_file.to_string_lossy(),
+    })
+}
+
+fn display_rules(rules: &[DbRule]) -> Vec<String> {
+    rules.iter().map(|rule| rule.content.clone()).collect()
+}
+
+fn session_summary(rules: &[DbRule]) -> String {
+    if rules.is_empty() {
+        return "当前会话选用规则 0 条".to_string();
+    }
+    let titles = rules
+        .iter()
+        .map(|rule| rule.title.as_str())
+        .collect::<Vec<_>>()
+        .join("、");
+    format!("当前会话选用规则 {} 条：{}", rules.len(), titles)
+}
+
+fn project_summary(rules: &[DbRule]) -> String {
+    let active = rules
+        .iter()
+        .filter(|rule| rule.status == ACTIVE_STATUS)
+        .collect::<Vec<_>>();
+    if active.is_empty() {
+        return "项目规则库 active 规则 0 条".to_string();
+    }
+    let titles = active
+        .iter()
+        .map(|rule| rule.title.as_str())
+        .collect::<Vec<_>>()
+        .join("、");
+    format!("项目规则库 active 规则 {} 条：{}", active.len(), titles)
+}
+
+fn session_payload(
+    action: &str,
+    context: &Context,
+    session_id: &str,
+    rules: &[DbRule],
+    changed_rules: Vec<DbRule>,
+    message: &str,
+) -> Value {
+    json!({
+        "action": action,
+        "project_root": context.project_root.to_string_lossy(),
+        "rules_root": context.rules_root.to_string_lossy(),
+        "db_file": context.db_file.to_string_lossy(),
+        "session_id": session_id,
+        "rule_count": rules.len(),
+        "rule_titles": rules.iter().map(|rule| rule.title.clone()).collect::<Vec<_>>(),
+        "summary": session_summary(rules),
+        "message": message,
+        "changed_rule": if changed_rules.len() == 1 { json!(changed_rules[0]) } else { Value::Null },
+        "changed_rules": changed_rules,
+        "display_rules": display_rules(rules),
+        "rules": rules,
+    })
+}
+
+fn project_payload(
+    action: &str,
+    context: &Context,
+    rules: &[DbRule],
+    selected_rules: Option<&[DbRule]>,
+    changed_rules: Vec<DbRule>,
+    session_id: &str,
+    message: &str,
+    session_payload_value: Option<Value>,
+) -> Value {
+    let display_source = selected_rules.unwrap_or(rules);
+    json!({
+        "action": action,
+        "project_root": context.project_root.to_string_lossy(),
+        "rules_root": context.rules_root.to_string_lossy(),
+        "db_file": context.db_file.to_string_lossy(),
+        "session_id": session_id,
+        "rule_count": rules.len(),
+        "active_rule_count": rules.iter().filter(|rule| rule.status == ACTIVE_STATUS).count(),
+        "summary": project_summary(rules),
+        "message": message,
+        "changed_rule": if changed_rules.len() == 1 { json!(changed_rules[0]) } else { Value::Null },
+        "changed_rules": changed_rules,
+        "selected_count": selected_rules.map(|rules| rules.len()).unwrap_or(0),
+        "selected_rules": selected_rules.unwrap_or(&[]),
+        "display_rules": display_source.iter().map(|rule| {
+            format!("{} [{}] {} {}: {}", rule.id, rule.status, rule.tags.join(","), rule.title, rule.content)
+        }).collect::<Vec<_>>(),
+        "rules": rules,
+        "session_payload": session_payload_value.unwrap_or(Value::Null),
+    })
+}
+
+fn cli_add(options: &HashMap<String, String>) -> Result<Value, String> {
+    if opt(options, "scope") == "session" {
+        return Err(
+            "scope=session is retired in v0.3; use project-level rules and rule-check selection"
+                .to_string(),
+        );
+    }
+    let context = build_context(options)?;
+    let conn = connect_db(&context)?;
+    let titles = split_batch(&required(options, "title")?);
+    let contents = split_batch(&required(options, "content")?);
+    if titles.len() != contents.len() {
+        return Err("batch add requires the same number of title/content segments when using English semicolon `;`".to_string());
+    }
+    let mut changed = Vec::new();
+    for (title, content) in titles.iter().zip(contents.iter()) {
+        changed.push(insert_rule(&conn, title, content, &opt(options, "tags"))?);
+    }
+    let rules = list_rules(&conn, true, "", "", &[], None)?;
+    Ok(project_payload(
+        if changed.len() > 1 {
+            "add-batch"
+        } else {
+            "add"
+        },
+        &context,
+        &rules,
+        None,
+        changed,
+        "",
+        "project rule added",
+        None,
+    ))
+}
+
+fn cli_list(options: &HashMap<String, String>) -> Result<Value, String> {
+    let context = build_context(options)?;
+    let conn = connect_db(&context)?;
+    let session_id = resolve_session_id(&opt(options, "session-id"));
+    let rules = list_selected_rules(&conn, &session_id, flag(options, "all"))?;
+    if flag(options, "summary") {
+        let mut payload = context_json(&context);
+        payload["action"] = json!("summary");
+        payload["session_id"] = json!(session_id);
+        payload["rule_count"] = json!(rules.len());
+        payload["rule_titles"] = json!(
+            rules
+                .iter()
+                .map(|rule| rule.title.clone())
+                .collect::<Vec<_>>()
+        );
+        payload["summary"] = json!(session_summary(&rules));
+        return Ok(payload);
+    }
+    Ok(session_payload(
+        "list",
+        &context,
+        &session_id,
+        &rules,
+        Vec::new(),
+        "selected rules listed",
+    ))
+}
+
+fn cli_update(options: &HashMap<String, String>) -> Result<Value, String> {
+    let context = build_context(options)?;
+    let conn = connect_db(&context)?;
+    let session_id = resolve_session_id(&opt(options, "session-id"));
+    let id = required(options, "id")?;
+    let selected = get_selected_ids(&conn, &session_id)?;
+    if !selected.contains(&id) {
+        return Err(format!("selected rule not found in current session: {id}"));
+    }
+    let changed = update_db_rule(
+        &conn,
+        &id,
+        &opt(options, "title"),
+        &opt(options, "content"),
+        None,
+        "",
+    )?;
+    let rules = list_selected_rules(&conn, &session_id, false)?;
+    Ok(session_payload(
+        "update",
+        &context,
+        &session_id,
+        &rules,
+        vec![changed],
+        "selected project rule updated",
+    ))
+}
+
+fn cli_delete(options: &HashMap<String, String>) -> Result<Value, String> {
+    let context = build_context(options)?;
+    let conn = connect_db(&context)?;
+    let session_id = resolve_session_id(&opt(options, "session-id"));
+    let id = opt(options, "id");
+    let before = list_selected_rules(&conn, &session_id, true)?;
+    let changed = if id.trim().is_empty() {
+        before
+    } else {
+        let found = before.iter().find(|rule| rule.id == id).cloned();
+        if found.is_none() {
+            return Err(format!("selected rule not found in current session: {id}"));
+        }
+        vec![found.unwrap()]
+    };
+    let ids = if id.trim().is_empty() {
+        Vec::new()
+    } else {
+        vec![id]
+    };
+    let rules = unselect_rules(&conn, &session_id, &ids)?;
+    Ok(session_payload(
+        if ids.is_empty() {
+            "unselect-all"
+        } else {
+            "unselect"
+        },
+        &context,
+        &session_id,
+        &rules,
+        changed,
+        "rule unselected from current session",
+    ))
+}
+
+fn cli_project_list(options: &HashMap<String, String>) -> Result<Value, String> {
+    let context = build_context(options)?;
+    let conn = connect_db(&context)?;
+    let session_id_raw = opt(options, "session-id");
+    let session_id = if session_id_raw.trim().is_empty() {
+        String::new()
+    } else {
+        resolve_session_id(&session_id_raw)
+    };
+    let selected_state = if session_id.is_empty() {
+        None
+    } else {
+        Some(session_id.as_str())
+    };
+    let all_rules = list_rules(&conn, true, "", "", &[], selected_state)?;
+    let selected = list_rules(
+        &conn,
+        flag(options, "all"),
+        &opt(options, "tag"),
+        &opt(options, "query"),
+        &[],
+        selected_state,
+    )?;
+    Ok(project_payload(
+        "list",
+        &context,
+        &all_rules,
+        Some(&selected),
+        Vec::new(),
+        &session_id,
+        "project rules listed",
+        None,
+    ))
+}
+
+fn cli_project_update(options: &HashMap<String, String>) -> Result<Value, String> {
+    let context = build_context(options)?;
+    let conn = connect_db(&context)?;
+    let tags = if opt(options, "tags").trim().is_empty() {
+        None
+    } else {
+        Some(split_tags(&opt(options, "tags")))
+    };
+    let changed = update_db_rule(
+        &conn,
+        &required(options, "id")?,
+        &opt(options, "title"),
+        &opt(options, "content"),
+        tags,
+        &opt(options, "status"),
+    )?;
+    let rules = list_rules(&conn, true, "", "", &[], None)?;
+    Ok(project_payload(
+        "update",
+        &context,
+        &rules,
+        None,
+        vec![changed],
+        "",
+        "project rule updated",
+        None,
+    ))
+}
+
+fn cli_project_delete(options: &HashMap<String, String>) -> Result<Value, String> {
+    let context = build_context(options)?;
+    let conn = connect_db(&context)?;
+    let changed =
+        deprecate_or_delete_rule(&conn, &required(options, "id")?, flag(options, "hard"))?;
+    let rules = list_rules(&conn, true, "", "", &[], None)?;
+    Ok(project_payload(
+        if flag(options, "hard") {
+            "delete-hard"
+        } else {
+            "delete"
+        },
+        &context,
+        &rules,
+        None,
+        vec![changed],
+        "",
+        if flag(options, "hard") {
+            "project rule hard deleted"
+        } else {
+            "project rule deprecated"
+        },
+        None,
+    ))
+}
+
+fn cli_scan(options: &HashMap<String, String>) -> Result<Value, String> {
+    let context = build_context(options)?;
+    let conn = connect_db(&context)?;
+    let source_root = if opt(options, "source").trim().is_empty() {
+        context.project_root.join(".codex")
+    } else {
+        PathBuf::from(opt(options, "source"))
+    };
+    let legacy_rules =
+        scan_legacy_yaml_files(&context, &source_root, !flag(options, "project-only"))?;
+
+    let mut imported_rules = Vec::new();
+    let mut reused_rules = Vec::new();
+    let mut selected_sessions = HashSet::new();
+    let mut restored_selection_count = 0usize;
+    for legacy_rule in legacy_rules.iter() {
+        let (rule, inserted) = insert_legacy_rule(&conn, legacy_rule)?;
+        if inserted {
+            imported_rules.push(rule.clone());
+        } else {
+            reused_rules.push(rule.clone());
+        }
+        if let Some(session_id) = legacy_rule.session_id.as_deref() {
+            // 旧 session YAML 的正文要变成项目规则，同时恢复该旧 session 对规则的选用关系。
+            // 这里不复制正文到会话，避免把 v0.2 的快照模型又偷渡回来。
+            if rule.status == ACTIVE_STATUS
+                && select_existing_rule_for_session(&conn, session_id, &rule.id)?
+            {
+                restored_selection_count += 1;
+                selected_sessions.insert(session_id.to_string());
+            }
+        }
+    }
+
+    let rules = list_rules(&conn, true, "", "", &[], None)?;
+    let mut payload = project_payload(
+        "scan",
+        &context,
+        &rules,
+        None,
+        imported_rules.clone(),
+        "",
+        "legacy YAML rules scanned into SQLite",
+        None,
+    );
+    payload["source_root"] = json!(source_root.to_string_lossy());
+    payload["scanned_count"] = json!(legacy_rules.len());
+    payload["imported_count"] = json!(imported_rules.len());
+    payload["reused_count"] = json!(reused_rules.len());
+    payload["restored_selection_count"] = json!(restored_selection_count);
+    payload["restored_sessions"] = json!(selected_sessions.into_iter().collect::<Vec<_>>());
+    payload["reused_rules"] = json!(reused_rules);
+    payload["legacy_sources"] = json!(
+        legacy_rules
+            .iter()
+            .map(|rule| json!({
+                "legacy_id": rule.legacy_id,
+                "source_file": rule.source_file,
+                "session_id": rule.session_id,
+                "title": rule.title,
+            }))
+            .collect::<Vec<_>>()
+    );
+    Ok(payload)
+}
+
+fn cli_pick(options: &HashMap<String, String>, force_ui: bool) -> Result<Value, String> {
+    let context = build_context(options)?;
+    let conn = connect_db(&context)?;
+    let session_id = resolve_session_id(&opt(options, "session-id"));
+    let ids = split_ids(&opt(options, "ids"));
+    if force_ui || flag(options, "ui") {
+        let visible = list_rules(
+            &conn,
+            true,
+            &opt(options, "tag"),
+            "",
+            &ids,
+            Some(&session_id),
+        )?;
+        let picker_action = run_picker_window(db_rules_to_items(&visible), opt(options, "query"));
+        let PickerAction::Pick(result) = picker_action else {
+            let all_rules = list_rules(&conn, true, "", "", &[], Some(&session_id))?;
+            return Ok(project_payload(
+                "pick-ui-cancel",
+                &context,
+                &all_rules,
+                Some(&[]),
+                Vec::new(),
+                &session_id,
+                "rule picker cancelled",
+                None,
+            ));
+        };
+        let allowed = visible
+            .iter()
+            .map(|rule| rule.id.as_str())
+            .collect::<HashSet<_>>();
+        let mut changed = Vec::new();
+        for update in result.updates {
+            if !allowed.contains(update.id.as_str()) {
+                return Err(format!(
+                    "rule picker returned update outside visible rule set: {}",
+                    update.id
+                ));
+            }
+            changed.push(update_db_rule(
+                &conn,
+                &update.id,
+                &update.title,
+                &update.content,
+                Some(update.tags),
+                &update.status,
+            )?);
+        }
+        let selected_ids = result
+            .selected_ids
+            .into_iter()
+            .filter(|id| allowed.contains(id.as_str()))
+            .collect::<Vec<_>>();
+        let selected = select_rules(&conn, &session_id, &selected_ids, true)?;
+        let all_rules = list_rules(&conn, true, "", "", &[], Some(&session_id))?;
+        let session_value = session_payload(
+            "list",
+            &context,
+            &session_id,
+            &selected,
+            Vec::new(),
+            "selected rules listed",
+        );
+        return Ok(project_payload(
+            "pick-ui",
+            &context,
+            &all_rules,
+            Some(&selected),
+            changed,
+            &session_id,
+            "current-session selections updated",
+            Some(session_value),
+        ));
+    }
+    let candidates = list_rules(
+        &conn,
+        false,
+        &opt(options, "tag"),
+        &opt(options, "query"),
+        &ids,
+        None,
+    )?;
+    if candidates.is_empty() {
+        return Err("no active project rules matched".to_string());
+    }
+    let selected = select_rules(
+        &conn,
+        &session_id,
+        &candidates
+            .iter()
+            .map(|rule| rule.id.clone())
+            .collect::<Vec<_>>(),
+        false,
+    )?;
+    let all_rules = list_rules(&conn, true, "", "", &[], Some(&session_id))?;
+    let session_value = session_payload(
+        "list",
+        &context,
+        &session_id,
+        &selected,
+        Vec::new(),
+        "selected rules listed",
+    );
+    Ok(project_payload(
+        "pick",
+        &context,
+        &all_rules,
+        Some(&selected),
+        Vec::new(),
+        &session_id,
+        "project rules selected for current session",
+        Some(session_value),
+    ))
+}
+
+fn db_rules_to_items(rules: &[DbRule]) -> Vec<RuleItem> {
+    rules
+        .iter()
+        .map(|rule| {
+            let mut item = RuleItem {
+                id: rule.id.clone(),
+                title: rule.title.clone(),
+                content: rule.content.clone(),
+                status: rule.status.clone(),
+                tags: rule.tags.clone(),
+                selected: rule.selected.unwrap_or(false),
+                original_title: rule.title.clone(),
+                original_content: rule.content.clone(),
+                original_status: rule.status.clone(),
+                original_tags: rule.tags.clone(),
+                display: String::new(),
+                search_text: String::new(),
+            };
+            refresh_rule_text(&mut item);
+            item
+        })
+        .collect()
 }
 
 fn headless_output_from_env() -> Option<PickerOutput> {
@@ -235,7 +1618,7 @@ fn headless_output_from_env() -> Option<PickerOutput> {
         .and_then(|raw| serde_json::from_str::<Vec<PickerUpdate>>(&raw).ok())
         .unwrap_or_default();
     Some(PickerOutput {
-        selected_ids: split_ids(&ids),
+        selected_ids: split_picker_ids(&ids),
         updates,
         cancelled: false,
     })
@@ -252,7 +1635,7 @@ fn truthy_env(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn split_ids(raw: &str) -> Vec<String> {
+fn split_picker_ids(raw: &str) -> Vec<String> {
     raw.split(',')
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -270,7 +1653,7 @@ fn load_rules(path: &PathBuf) -> Result<Vec<RuleItem>, String> {
             let id = rule.id.trim().to_string();
             let title = rule.title.trim().to_string();
             let content = rule.content.trim().to_string();
-            let status = normalize_status(&rule.status);
+            let status = normalize_ui_status(&rule.status);
             if id.is_empty() || title.is_empty() || content.is_empty() {
                 return None;
             }
@@ -282,6 +1665,7 @@ fn load_rules(path: &PathBuf) -> Result<Vec<RuleItem>, String> {
                 content,
                 status,
                 tags,
+                selected: rule.selected,
                 original_title: String::new(),
                 original_content: String::new(),
                 original_status: String::new(),
@@ -304,7 +1688,7 @@ fn default_status() -> String {
     "active".to_string()
 }
 
-fn normalize_status(raw: &str) -> String {
+fn normalize_ui_status(raw: &str) -> String {
     match raw.trim().to_ascii_lowercase().as_str() {
         "deprecated" => "deprecated".to_string(),
         _ => "active".to_string(),
@@ -569,6 +1953,14 @@ unsafe extern "system" fn wnd_proc(
                 tags_field_label,
                 status_field_label,
             });
+            // v0.3 的勾选状态来自 SQLite 中当前 session 的 rule_selections。
+            // UI 只负责展示和回传选择关系，不再把项目规则复制成会话规则快照。
+            state.checked_rule_ids = state
+                .rules
+                .iter()
+                .filter(|rule| rule.selected)
+                .map(|rule| rule.id.clone())
+                .collect();
             refresh_visible_rules(&mut state);
             select_first_visible_rule(&mut state);
             load_editor_from_current_selection(&mut state);
@@ -855,7 +2247,7 @@ fn current_switch_status(hwnd: HWND) -> String {
         return "active".to_string();
     }
     let state = unsafe { &*ptr };
-    normalize_status(&state.status_value)
+    normalize_ui_status(&state.status_value)
 }
 
 fn refresh_visible_rules(state: &mut WindowState) {
@@ -1152,8 +2544,8 @@ fn save_editor_to_current_rule(state: &mut WindowState) {
     };
     rule.title = read_window_text(state.title_edit).trim().to_string();
     rule.content = read_window_text(state.content_edit).trim().to_string();
-    rule.tags = split_tags(&read_window_text(state.tags_edit));
-    rule.status = normalize_status(&state.status_value);
+    rule.tags = split_ui_tags(&read_window_text(state.tags_edit));
+    rule.status = normalize_ui_status(&state.status_value);
     refresh_rule_text(rule);
     update_status_label(state);
 }
@@ -1446,7 +2838,7 @@ fn set_window_text(hwnd: HWND, text: &str) {
     }
 }
 
-fn split_tags(raw: &str) -> Vec<String> {
+fn split_ui_tags(raw: &str) -> Vec<String> {
     raw.split(',')
         .map(str::trim)
         .filter(|value| !value.is_empty())

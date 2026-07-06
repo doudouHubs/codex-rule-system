@@ -1,46 +1,40 @@
 ---
 name: rule-list
-description: List current-session rules.
+description: List rules selected by the current session.
 ---
 
 # rule-list
 
 ## Overview
 
-`$rule-list` 用于查看当前项目当前会话已经入库的规则。
+`$rule-list` 用于查看当前项目当前会话已经选用的项目级规则。
 
-显式调用时默认返回简版完整规则列表；带 `--summary` 时只返回数量和标题，适合非更新轮摘要。
+事实来源是 `<project_root>/.codex-rules/rules.db` 中的 `rule_selections JOIN rules JOIN rule_details`，不是会话级规则文件。
 
 ## Workflow
 
-1. 定位当前项目当前会话的规则目录。
-2. 若目录不存在则自动初始化空仓。
-3. 读取 `rules.yaml`，按当前内容返回完整列表或摘要。
-4. 完整列表默认只展示规则 `content`，一行一条，不展示 `id`、标题、时间戳。
-5. 该技能只读，不修改任何规则内容。
+1. 解析当前项目根和当前 `session_id`。
+2. 读取当前会话选用的 active 项目规则。
+3. 完整列表默认只展示规则 `content`，一行一条，不展示时间戳。
+4. `--summary` 只返回数量和标题，适合非更新轮摘要。
+5. 该技能只读，不修改规则本体或选用关系。
 
 ## Commands
 
 ```powershell
-# 将 $skillRoot 设置为当前 SKILL.md 所在目录；从脚本文件执行时可用 $PSScriptRoot。
 $skillRoot = "C:\path\to\rule-system\skills\rule-list"
 $pluginRoot = Resolve-Path (Join-Path $skillRoot "..\..")
-$script = Join-Path $pluginRoot "scripts/session_rules.py"
+$exe = Join-Path $pluginRoot "bin/rule-system.exe"
 
-# 完整列表
-python $script list
-
-# 摘要
-python $script list --summary
- 
-# JSON
-python $script list --json
+& $exe list
+& $exe list --summary
+& $exe list --all
 ```
 
 ## Output Contract
 
 - 完整列表模式：
-  - 一行总览：`当前项目当前会话规则共 N 条。`
+  - 一行总览：`当前会话选用规则共 N 条。`
   - 规则明细：每条仅显示 `content`，格式为 `- 规则内容`
 - 摘要模式：
   - `rule_count`
@@ -49,9 +43,6 @@ python $script list --json
 
 ## Guardrails
 
-- `rule-list` 不修改规则。
-- 只读取当前项目当前会话，不串到长期记忆或别的会话目录。
-- 用户显式查看时给完整列表；非更新轮摘要策略由 `$rule-display` 负责。
-
-
-
+- 不读取旧 `.codex/session-rules` 或 `.codex/project-rules`。
+- 不展示未被当前 session 选用的项目规则。
+- 不展示长期记忆或 `project-memory`。

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+- Breaking: replaced `.codex/session-rules` and `.codex/project-rules` YAML storage with `<project_root>/.codex-rules/rules.db`.
+- Breaking: retired session-level rule content; sessions now persist only selected project rule IDs.
+- Added Rust single-exe SQLite owner `bin/rule-system.exe` with `rules`, `rule_details`, and `rule_selections` tables.
+- Changed `$rule-check` pick semantics from snapshot copy to current-session selection management.
+- Changed `$rule-add` to create project-level rules only; `scope=session` now fails.
+- Retired the standalone `rule-picker-win.exe`; the Win32 checklist UI is now part of `rule-system.exe`.
+- Added `$rule-scan` / `rule-system.exe scan` for explicit one-time import of legacy YAML rules into SQLite.
+
 ## 0.2.8
 
 - Fixed `$rule-add` so Chinese semicolon `；` is always treated as normal text.
