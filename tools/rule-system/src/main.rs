@@ -11,36 +11,37 @@ use std::path::{Path, PathBuf};
 use std::ptr::null_mut;
 use std::sync::mpsc::{Sender, channel};
 use std::time::{SystemTime, UNIX_EPOCH};
-use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CLIP_DEFAULT_PRECIS, CreateFontW, CreatePen, CreateSolidBrush, DEFAULT_CHARSET,
-    DEFAULT_QUALITY, DT_CENTER, DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW, EndPaint,
-    FF_DONTCARE, FW_NORMAL, FillRect, HBRUSH, HDC, HFONT, InvalidateRect, OUT_DEFAULT_PRECIS,
-    PAINTSTRUCT, PS_SOLID, RoundRect, SelectObject, SetBkColor, SetBkMode, SetTextColor,
-    TRANSPARENT,
+    BeginPaint, CLIP_DEFAULT_PRECIS, ClientToScreen, CreateFontW, CreatePen, CreateSolidBrush,
+    DEFAULT_CHARSET, DEFAULT_QUALITY, DT_CENTER, DT_SINGLELINE, DT_VCENTER, DeleteObject,
+    DrawTextW, EndPaint, FF_DONTCARE, FW_NORMAL, FillRect, HBRUSH, HDC, HFONT, InvalidateRect,
+    OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_SOLID, RoundRect, ScreenToClient, SelectObject, SetBkColor,
+    SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
     ICC_LISTVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx, LVCF_FMT, LVCF_TEXT,
-    LVCF_WIDTH, LVCFMT_LEFT, LVCOLUMNW, LVIF_STATE, LVIF_TEXT, LVIS_FOCUSED, LVIS_SELECTED,
-    LVIS_STATEIMAGEMASK, LVITEMW, LVM_DELETEALLITEMS, LVM_GETNEXTITEM, LVM_INSERTCOLUMNW,
-    LVM_INSERTITEMW, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMSTATE, LVM_SETITEMTEXTW,
-    LVN_ITEMCHANGED, LVNI_SELECTED, LVS_EX_CHECKBOXES, LVS_EX_FULLROWSELECT, LVS_EX_GRIDLINES,
-    LVS_REPORT, LVS_SHOWSELALWAYS, NM_CLICK, NMHDR, NMLISTVIEW, WC_LISTVIEWW,
+    LVCF_WIDTH, LVCFMT_LEFT, LVCOLUMNW, LVIF_STATE, LVIF_TEXT, LVIR_BOUNDS, LVIS_FOCUSED,
+    LVIS_SELECTED, LVIS_STATEIMAGEMASK, LVITEMW, LVM_DELETEALLITEMS, LVM_GETNEXTITEM,
+    LVM_GETSUBITEMRECT, LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETEXTENDEDLISTVIEWSTYLE,
+    LVM_SETITEMSTATE, LVM_SETITEMTEXTW, LVN_ITEMCHANGED, LVNI_SELECTED, LVS_EX_CHECKBOXES,
+    LVS_EX_FULLROWSELECT, LVS_EX_GRIDLINES, LVS_REPORT, LVS_SHOWSELALWAYS, NM_CLICK, NMHDR,
+    NMLISTVIEW, WC_LISTVIEWW,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{SetFocus, VK_ESCAPE, VK_RETURN};
 use windows::Win32::UI::WindowsAndMessaging::{
     ACCEL, CB_ADDSTRING, CB_GETCURSEL, CB_GETLBTEXT, CB_RESETCONTENT, CB_SETCURSEL,
-    CBS_DROPDOWNLIST, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
-    CreateAcceleratorTableW, CreateWindowExW, DefWindowProcW, DestroyAcceleratorTable,
-    DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL, ES_AUTOVSCROLL, ES_MULTILINE, FVIRTKEY,
-    GWLP_USERDATA, GetClientRect, GetMessageW, GetParent, GetWindowLongPtrW, HMENU, LoadCursorW,
-    MSG, PostQuitMessage, RegisterClassW, SW_RESTORE, SWP_NOZORDER, SendMessageW,
-    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TranslateAcceleratorW,
-    TranslateMessage, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_CTLCOLORDLG,
-    WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC, WM_DESTROY, WM_ERASEBKGND,
-    WM_LBUTTONDOWN, WM_NOTIFY, WM_PAINT, WM_SETFONT, WM_SIZE, WNDCLASSW, WS_BORDER, WS_CHILD,
-    WS_OVERLAPPEDWINDOW, WS_VISIBLE, WS_VSCROLL,
+    CB_SHOWDROPDOWN, CBN_SELCHANGE, CBS_DROPDOWNLIST, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW,
+    CW_USEDEFAULT, CreateAcceleratorTableW, CreateWindowExW, DefWindowProcW,
+    DestroyAcceleratorTable, DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL, ES_AUTOVSCROLL,
+    ES_MULTILINE, FVIRTKEY, GWLP_USERDATA, GetClientRect, GetMessageW, GetParent,
+    GetWindowLongPtrW, HMENU, LoadCursorW, MSG, PostQuitMessage, RegisterClassW, SW_HIDE,
+    SW_RESTORE, SW_SHOW, SWP_NOZORDER, SendMessageW, SetWindowLongPtrW, SetWindowPos,
+    SetWindowTextW, ShowWindow, TranslateAcceleratorW, TranslateMessage, WINDOW_STYLE, WM_CLOSE,
+    WM_COMMAND, WM_CREATE, WM_CTLCOLORDLG, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC,
+    WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_NOTIFY, WM_PAINT, WM_SETFONT, WM_SIZE, WNDCLASSW,
+    WS_BORDER, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::PCWSTR;
 
@@ -55,6 +56,10 @@ const ID_STATUS: usize = 1008;
 const ID_SAVE_EDIT: usize = 1009;
 const ID_MODULE_FILTER: usize = 1010;
 const ID_MODULE_EDIT: usize = 1011;
+const ID_STATUS_CELL: usize = 1012;
+const ID_MODULE_CELL: usize = 1013;
+const STATUS_COLUMN: usize = 2;
+const MODULE_COLUMN: usize = 3;
 const ACTIVE_STATUS: &str = "active";
 const DEPRECATED_STATUS: &str = "deprecated";
 const GLOBAL_MODULE: &str = "global";
@@ -192,6 +197,8 @@ struct WindowState {
     tags_edit: HWND,
     module_edit: HWND,
     status_switch: HWND,
+    status_cell_combo: HWND,
+    module_cell_combo: HWND,
     save_button: HWND,
     confirm_button: HWND,
     cancel_button: HWND,
@@ -200,6 +207,7 @@ struct WindowState {
     font: HFONT,
     action_sent: bool,
     editing_rule_index: Option<usize>,
+    cell_editor: Option<CellEditor>,
     status_value: String,
     title_label: HWND,
     hint_label: HWND,
@@ -214,6 +222,19 @@ struct WindowState {
     module_field_label: HWND,
     status_field_label: HWND,
     font_title: HFONT,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CellEditorKind {
+    Status,
+    Module,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CellEditor {
+    rule_index: usize,
+    visible_index: usize,
+    kind: CellEditorKind,
 }
 
 fn main() {
@@ -2459,6 +2480,8 @@ unsafe extern "system" fn wnd_proc(
             let module_edit = create_combo(hwnd, 690, 556, 240, 220, ID_MODULE_EDIT);
             let status_field_label = create_label(hwnd, "状态", 690, 540, 360, 22);
             let status_switch = create_status_switch(hwnd, 690, 564, 240, 34, ID_STATUS);
+            let status_cell_combo = create_cell_combo(hwnd, ID_STATUS_CELL);
+            let module_cell_combo = create_cell_combo(hwnd, ID_MODULE_CELL);
             let save_button = create_button(hwnd, "保存编辑", 690, 614, 150, 36, ID_SAVE_EDIT);
             let cancel_button = create_button(hwnd, "取消 Esc", 756, 614, 140, 36, ID_CANCEL);
             let confirm_button =
@@ -2483,6 +2506,8 @@ unsafe extern "system" fn wnd_proc(
             set_font(module_field_label, font);
             set_font(module_edit, font);
             set_font(status_field_label, font);
+            set_font(status_cell_combo, font);
+            set_font(module_cell_combo, font);
             set_font(save_button, font);
             set_font(cancel_button, font);
             set_font(confirm_button, font);
@@ -2501,6 +2526,8 @@ unsafe extern "system" fn wnd_proc(
                 tags_edit,
                 module_edit,
                 status_switch,
+                status_cell_combo,
+                module_cell_combo,
                 save_button,
                 confirm_button,
                 cancel_button,
@@ -2510,6 +2537,7 @@ unsafe extern "system" fn wnd_proc(
                 font_title,
                 action_sent: false,
                 editing_rule_index: None,
+                cell_editor: None,
                 status_value: "active".to_string(),
                 title_label,
                 hint_label,
@@ -2526,6 +2554,8 @@ unsafe extern "system" fn wnd_proc(
             });
             populate_module_filter(state.module_filter, &state.modules, &params.initial_module);
             populate_module_edit(state.module_edit, &state.modules, GLOBAL_MODULE);
+            populate_status_combo(state.status_cell_combo, ACTIVE_STATUS);
+            populate_module_edit(state.module_cell_combo, &state.modules, GLOBAL_MODULE);
             // v0.4 的勾选状态来自 SQLite 中当前 session 的 rule_selections。
             // UI 只负责展示和回传选择关系，不再把项目规则复制成会话规则快照。
             state.checked_rule_ids = state
@@ -2547,31 +2577,43 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_COMMAND => {
             let id = loword(wparam.0 as u32) as usize;
+            let notification = hiword(wparam.0 as u32);
             let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState };
             if ptr.is_null() {
                 return LRESULT(0);
             }
             let state = unsafe { &mut *ptr };
+            if matches!(id, ID_STATUS_CELL | ID_MODULE_CELL) && notification == CBN_SELCHANGE as u16
+            {
+                commit_cell_combo_selection(state, id);
+                return LRESULT(0);
+            }
             match id {
                 ID_SEARCH => {
+                    hide_cell_editors(state);
                     save_editor_to_current_rule(state);
                     refresh_visible_rules(state);
                     select_first_visible_rule(state);
                     load_editor_from_current_selection(state);
                 }
                 ID_MODULE_FILTER => {
+                    hide_cell_editors(state);
                     save_editor_to_current_rule(state);
                     refresh_visible_rules(state);
                     select_first_visible_rule(state);
                     load_editor_from_current_selection(state);
                 }
                 ID_SAVE_EDIT => {
+                    hide_cell_editors(state);
                     save_editor_to_current_rule(state);
                     refresh_visible_rules(state);
                     restore_editor_selection(state);
                     load_editor_from_current_selection(state);
                 }
-                ID_CONFIRM => finish_with_selection(hwnd, state),
+                ID_CONFIRM => {
+                    hide_cell_editors(state);
+                    finish_with_selection(hwnd, state)
+                }
                 ID_CANCEL => finish_cancelled(hwnd, state),
                 _ => {}
             }
@@ -2589,7 +2631,8 @@ unsafe extern "system" fn wnd_proc(
         WM_SIZE => {
             let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState };
             if !ptr.is_null() {
-                let state = unsafe { &*ptr };
+                let state = unsafe { &mut *ptr };
+                hide_cell_editors(state);
                 apply_layout(hwnd, state);
             }
             LRESULT(0)
@@ -2990,11 +3033,36 @@ fn handle_list_notify(state: &mut WindowState, lparam: LPARAM) {
     }
     match header.code {
         LVN_ITEMCHANGED => handle_list_item_changed(state, lparam),
-        NM_CLICK => {
-            save_editor_to_current_rule(state);
-            load_editor_from_current_selection(state);
-        }
+        NM_CLICK => handle_list_click(state, lparam),
         _ => {}
+    }
+}
+
+fn handle_list_click(state: &mut WindowState, lparam: LPARAM) {
+    let event = unsafe { &*(lparam.0 as *const NMLISTVIEW) };
+    if event.iItem < 0 {
+        hide_cell_editors(state);
+        save_editor_to_current_rule(state);
+        load_editor_from_current_selection(state);
+        return;
+    }
+
+    let visible_index = event.iItem as usize;
+    let subitem = event.iSubItem.max(0) as usize;
+    let Some(rule_index) = state.visible_indices.get(visible_index).copied() else {
+        hide_cell_editors(state);
+        return;
+    };
+
+    save_editor_to_current_rule(state);
+    select_visible_row(state.list, visible_index);
+    state.editing_rule_index = Some(rule_index);
+    load_editor_from_current_selection(state);
+
+    match subitem {
+        STATUS_COLUMN => show_status_cell_combo(state, visible_index, rule_index),
+        MODULE_COLUMN => show_module_cell_combo(state, visible_index, rule_index),
+        _ => hide_cell_editors(state),
     }
 }
 
@@ -3026,6 +3094,167 @@ fn handle_list_item_changed(state: &mut WindowState, lparam: LPARAM) {
     {
         save_editor_to_current_rule(state);
         load_editor_from_current_selection(state);
+    }
+}
+
+fn show_status_cell_combo(state: &mut WindowState, visible_index: usize, rule_index: usize) {
+    let Some(rule) = state.rules.get(rule_index) else {
+        return;
+    };
+    populate_status_combo(state.status_cell_combo, &rule.status);
+    show_cell_combo(
+        state,
+        state.status_cell_combo,
+        visible_index,
+        STATUS_COLUMN,
+        CellEditorKind::Status,
+        rule_index,
+    );
+}
+
+fn show_module_cell_combo(state: &mut WindowState, visible_index: usize, rule_index: usize) {
+    let Some(rule) = state.rules.get(rule_index) else {
+        return;
+    };
+    populate_module_edit(state.module_cell_combo, &state.modules, &rule.module);
+    show_cell_combo(
+        state,
+        state.module_cell_combo,
+        visible_index,
+        MODULE_COLUMN,
+        CellEditorKind::Module,
+        rule_index,
+    );
+}
+
+fn show_cell_combo(
+    state: &mut WindowState,
+    combo: HWND,
+    visible_index: usize,
+    subitem: usize,
+    kind: CellEditorKind,
+    rule_index: usize,
+) {
+    hide_cell_editors(state);
+    let Some(rect) = list_subitem_rect_in_parent(state.list, visible_index, subitem) else {
+        return;
+    };
+    let height = (rect.bottom - rect.top).max(24);
+    let width = (rect.right - rect.left).max(80);
+    set_bounds(combo, rect.left, rect.top, width, height + 180);
+    state.cell_editor = Some(CellEditor {
+        rule_index,
+        visible_index,
+        kind,
+    });
+    unsafe {
+        let _ = ShowWindow(combo, SW_SHOW);
+        let _ = SetFocus(combo);
+        let _ = SendMessageW(combo, CB_SHOWDROPDOWN, WPARAM(1), LPARAM(0));
+    }
+}
+
+fn list_subitem_rect_in_parent(list: HWND, visible_index: usize, subitem: usize) -> Option<RECT> {
+    let mut rect = RECT {
+        left: LVIR_BOUNDS as i32,
+        top: subitem as i32,
+        right: 0,
+        bottom: 0,
+    };
+    let ok = unsafe {
+        SendMessageW(
+            list,
+            LVM_GETSUBITEMRECT,
+            WPARAM(visible_index),
+            LPARAM((&mut rect as *mut RECT) as isize),
+        )
+        .0
+    };
+    if ok == 0 {
+        return None;
+    }
+
+    let parent = unsafe { GetParent(list).unwrap_or(HWND(null_mut())) };
+    if parent.0.is_null() {
+        return None;
+    }
+    let mut top_left = POINT {
+        x: rect.left,
+        y: rect.top,
+    };
+    let mut bottom_right = POINT {
+        x: rect.right,
+        y: rect.bottom,
+    };
+    unsafe {
+        let _ = ClientToScreen(list, &mut top_left);
+        let _ = ClientToScreen(list, &mut bottom_right);
+        let _ = ScreenToClient(parent, &mut top_left);
+        let _ = ScreenToClient(parent, &mut bottom_right);
+    }
+    Some(RECT {
+        left: top_left.x,
+        top: top_left.y,
+        right: bottom_right.x,
+        bottom: bottom_right.y,
+    })
+}
+
+fn commit_cell_combo_selection(state: &mut WindowState, combo_id: usize) {
+    let Some(editor) = state.cell_editor else {
+        return;
+    };
+    let expected_kind = if combo_id == ID_STATUS_CELL {
+        CellEditorKind::Status
+    } else {
+        CellEditorKind::Module
+    };
+    if editor.kind != expected_kind {
+        return;
+    }
+
+    if let Some(rule) = state.rules.get_mut(editor.rule_index) {
+        match editor.kind {
+            CellEditorKind::Status => {
+                rule.status = normalize_ui_status(&read_combo_text(state.status_cell_combo));
+            }
+            CellEditorKind::Module => {
+                rule.module = read_module_edit(state.module_cell_combo);
+            }
+        }
+        refresh_rule_text(rule);
+    }
+    hide_cell_editors(state);
+    refresh_visible_rules(state);
+    restore_rule_selection_or_first(state, editor.rule_index, editor.visible_index);
+    load_editor_from_current_selection(state);
+}
+
+fn restore_rule_selection_or_first(
+    state: &mut WindowState,
+    rule_index: usize,
+    fallback_visible_index: usize,
+) {
+    if let Some(visible_index) = state
+        .visible_indices
+        .iter()
+        .position(|candidate| *candidate == rule_index)
+    {
+        select_visible_row(state.list, visible_index);
+        return;
+    }
+    if fallback_visible_index < state.visible_indices.len() {
+        select_visible_row(state.list, fallback_visible_index);
+        return;
+    }
+    select_first_visible_rule(state);
+}
+
+fn hide_cell_editors(state: &mut WindowState) {
+    state.cell_editor = None;
+    unsafe {
+        let _ = ShowWindow(state.status_cell_combo, SW_HIDE);
+        let _ = ShowWindow(state.module_cell_combo, SW_HIDE);
     }
 }
 
@@ -3407,6 +3636,26 @@ fn create_combo(hwnd: HWND, x: i32, y: i32, width: i32, height: i32, id: usize) 
     }
 }
 
+fn create_cell_combo(hwnd: HWND, id: usize) -> HWND {
+    unsafe {
+        CreateWindowExW(
+            Default::default(),
+            PCWSTR(to_wstring("COMBOBOX").as_ptr()),
+            PCWSTR(to_wstring("").as_ptr()),
+            WINDOW_STYLE(WS_CHILD.0 | WS_BORDER.0 | CBS_DROPDOWNLIST as u32),
+            0,
+            0,
+            1,
+            1,
+            hwnd,
+            HMENU(id as *mut core::ffi::c_void),
+            None,
+            None,
+        )
+        .unwrap_or(HWND(null_mut()))
+    }
+}
+
 fn combo_text(slug: &str, display_name: &str) -> String {
     format!("{slug} | {display_name}")
 }
@@ -3431,6 +3680,15 @@ fn populate_module_edit(combo: HWND, modules: &[RuleModule], selected_module: &s
         add_combo_item(combo, &combo_text(&module.slug, &module.display_name));
     }
     set_combo_selection_by_slug(combo, selected_module);
+}
+
+fn populate_status_combo(combo: HWND, selected_status: &str) {
+    unsafe {
+        let _ = SendMessageW(combo, CB_RESETCONTENT, WPARAM(0), LPARAM(0));
+    }
+    add_combo_item(combo, ACTIVE_STATUS);
+    add_combo_item(combo, DEPRECATED_STATUS);
+    set_combo_selection_by_slug(combo, &normalize_ui_status(selected_status));
 }
 
 fn add_combo_item(combo: HWND, text: &str) {
@@ -3705,6 +3963,10 @@ fn to_wstring(input: &str) -> Vec<u16> {
 
 fn loword(value: u32) -> u16 {
     (value & 0xFFFF) as u16
+}
+
+fn hiword(value: u32) -> u16 {
+    ((value >> 16) & 0xFFFF) as u16
 }
 
 fn rgb(r: u8, g: u8, b: u8) -> COLORREF {

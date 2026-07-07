@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1
+
+- Added inline dropdown editing for the `status` and `module` cells in the native `rule-check` table.
+- Kept checkbox selection semantics unchanged: checkboxes select session rules; cell dropdowns only edit rule metadata.
+- Rebuilt `bin/rule-system.exe` with the updated Win32 table-cell editor.
+
 ## 0.4.0
 
 - Added `rule_modules` as the strong enum owner for rule modules, with built-in `global`.
