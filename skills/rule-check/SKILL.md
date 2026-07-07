@@ -49,8 +49,7 @@ $exe = Join-Path $pluginRoot "bin/rule-system.exe"
 - `list` 默认只展示 `active` 规则；`--all` 包含 `deprecated` 规则。
 - `--module global` 只显示 `global`；`--module frontend` 显示 `frontend + global`。
 - UI 左上模块筛选只改变可见行，不清空已勾选规则。
-- UI 右侧模块选择会更新项目规则本体；目标模块必须是 active 枚举。
-- UI 表格里的 `状态` 和 `模块` 单元格支持点击后下拉切换；选择后立即更新当前行内存态，最终仍以“保存编辑”或“保存并选取”提交。
+- UI 表格里的 `状态` 和 `模块` 单元格是状态/模块的唯一编辑入口；点击后下拉切换，选择后立即更新当前行内存态，最终仍以“保存编辑”或“保存并选取”提交。
 - `update` 按 `id` 更新项目规则本体；已选用该规则的会话之后会读取最新内容。
 - `delete` 默认把项目规则标记为 `deprecated`；只有用户明确要求彻底删除时才使用 `--hard`。
 - `pick` 不复制规则正文，只更新当前 `session_id` 的选用关系。

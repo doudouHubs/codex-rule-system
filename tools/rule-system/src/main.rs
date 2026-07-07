@@ -55,7 +55,6 @@ const ID_TAGS: usize = 1007;
 const ID_STATUS: usize = 1008;
 const ID_SAVE_EDIT: usize = 1009;
 const ID_MODULE_FILTER: usize = 1010;
-const ID_MODULE_EDIT: usize = 1011;
 const ID_STATUS_CELL: usize = 1012;
 const ID_MODULE_CELL: usize = 1013;
 const STATUS_COLUMN: usize = 2;
@@ -195,7 +194,6 @@ struct WindowState {
     title_edit: HWND,
     content_edit: HWND,
     tags_edit: HWND,
-    module_edit: HWND,
     status_switch: HWND,
     status_cell_combo: HWND,
     module_cell_combo: HWND,
@@ -219,8 +217,6 @@ struct WindowState {
     title_field_label: HWND,
     content_field_label: HWND,
     tags_field_label: HWND,
-    module_field_label: HWND,
-    status_field_label: HWND,
     font_title: HFONT,
 }
 
@@ -2464,7 +2460,7 @@ unsafe extern "system" fn wnd_proc(
             let editor_heading_label = create_label(hwnd, "编辑当前规则", 690, 66, 360, 28);
             let editor_hint_label = create_label(
                 hwnd,
-                "只保存右侧当前高亮行；未勾选不会被写入当前 session。",
+                "右侧编辑标题、内容和标签；状态/模块请直接在左侧表格单元格下拉切换。",
                 690,
                 96,
                 360,
@@ -2476,10 +2472,7 @@ unsafe extern "system" fn wnd_proc(
             let content_edit = create_multiline_edit(hwnd, "", 690, 226, 372, 228, ID_CONTENT);
             let tags_field_label = create_label(hwnd, "标签（逗号分隔）", 690, 470, 360, 22);
             let tags_edit = create_edit(hwnd, "", 690, 494, 372, 30, ID_TAGS);
-            let module_field_label = create_label(hwnd, "模块", 690, 532, 360, 22);
-            let module_edit = create_combo(hwnd, 690, 556, 240, 220, ID_MODULE_EDIT);
-            let status_field_label = create_label(hwnd, "状态", 690, 540, 360, 22);
-            let status_switch = create_status_switch(hwnd, 690, 564, 240, 34, ID_STATUS);
+            let status_switch = create_status_switch(hwnd, 0, 0, 1, 1, ID_STATUS);
             let status_cell_combo = create_cell_combo(hwnd, ID_STATUS_CELL);
             let module_cell_combo = create_cell_combo(hwnd, ID_MODULE_CELL);
             let save_button = create_button(hwnd, "保存编辑", 690, 614, 150, 36, ID_SAVE_EDIT);
@@ -2503,9 +2496,7 @@ unsafe extern "system" fn wnd_proc(
             set_font(content_edit, font);
             set_font(tags_field_label, font);
             set_font(tags_edit, font);
-            set_font(module_field_label, font);
-            set_font(module_edit, font);
-            set_font(status_field_label, font);
+            set_font(status_switch, font);
             set_font(status_cell_combo, font);
             set_font(module_cell_combo, font);
             set_font(save_button, font);
@@ -2524,7 +2515,6 @@ unsafe extern "system" fn wnd_proc(
                 title_edit,
                 content_edit,
                 tags_edit,
-                module_edit,
                 status_switch,
                 status_cell_combo,
                 module_cell_combo,
@@ -2549,11 +2539,8 @@ unsafe extern "system" fn wnd_proc(
                 title_field_label,
                 content_field_label,
                 tags_field_label,
-                module_field_label,
-                status_field_label,
             });
             populate_module_filter(state.module_filter, &state.modules, &params.initial_module);
-            populate_module_edit(state.module_edit, &state.modules, GLOBAL_MODULE);
             populate_status_combo(state.status_cell_combo, ACTIVE_STATUS);
             populate_module_edit(state.module_cell_combo, &state.modules, GLOBAL_MODULE);
             // v0.4 的勾选状态来自 SQLite 中当前 session 的 rule_selections。
@@ -3328,9 +3315,6 @@ fn load_editor_from_current_selection(state: &mut WindowState) {
         set_window_text(state.title_edit, "");
         set_window_text(state.content_edit, "");
         set_window_text(state.tags_edit, "");
-        set_combo_selection_by_slug(state.module_edit, GLOBAL_MODULE);
-        state.status_value = "active".to_string();
-        invalidate_status_switch(state);
         update_status_label(state);
         return;
     };
@@ -3344,9 +3328,6 @@ fn load_editor_from_current_selection(state: &mut WindowState) {
     set_window_text(state.title_edit, &rule.title);
     set_window_text(state.content_edit, &rule.content);
     set_window_text(state.tags_edit, &rule.tags.join(","));
-    set_combo_selection_by_slug(state.module_edit, &rule.module);
-    state.status_value = rule.status.clone();
-    invalidate_status_switch(state);
     update_status_label(state);
 }
 
@@ -3360,8 +3341,8 @@ fn save_editor_to_current_rule(state: &mut WindowState) {
     rule.title = read_window_text(state.title_edit).trim().to_string();
     rule.content = read_window_text(state.content_edit).trim().to_string();
     rule.tags = split_ui_tags(&read_window_text(state.tags_edit));
-    rule.module = read_module_edit(state.module_edit);
-    rule.status = normalize_ui_status(&state.status_value);
+    // 状态和模块已经收敛到表格单元格下拉，右侧编辑区只负责文本字段。
+    // 这里故意不读取隐藏控件，避免旧右侧入口把表格内联修改覆盖回去。
     refresh_rule_text(rule);
     update_status_label(state);
 }
@@ -3582,7 +3563,7 @@ fn create_button(
             Default::default(),
             PCWSTR(to_wstring("BUTTON").as_ptr()),
             PCWSTR(to_wstring(text).as_ptr()),
-            WS_CHILD | WS_VISIBLE,
+            WS_CHILD,
             x,
             y,
             width,
@@ -3854,11 +3835,7 @@ fn apply_layout(hwnd: HWND, state: &WindowState) {
     let list_top = 154;
     let editor_top = 66;
     let save_y = button_y - 44;
-    let status_edit_y = save_y - 42;
-    let status_label_y = status_edit_y - 24;
-    let module_edit_y = status_label_y - 42;
-    let module_label_y = module_edit_y - 24;
-    let tags_edit_y = module_label_y - 42;
+    let tags_edit_y = save_y - 42;
     let tags_label_y = tags_edit_y - 24;
     let content_y = 226;
     let content_h = (tags_label_y - content_y - 12).max(96);
@@ -3905,22 +3882,6 @@ fn apply_layout(hwnd: HWND, state: &WindowState) {
     set_bounds(state.content_edit, editor_x, content_y, editor_w, content_h);
     set_bounds(state.tags_field_label, editor_x, tags_label_y, editor_w, 22);
     set_bounds(state.tags_edit, editor_x, tags_edit_y, editor_w, 30);
-    set_bounds(
-        state.module_field_label,
-        editor_x,
-        module_label_y,
-        editor_w,
-        22,
-    );
-    set_bounds(state.module_edit, editor_x, module_edit_y, 248, 220);
-    set_bounds(
-        state.status_field_label,
-        editor_x,
-        status_label_y,
-        editor_w,
-        22,
-    );
-    set_bounds(state.status_switch, editor_x, status_edit_y, 248, 34);
     // 保存编辑是“编辑当前行”的局部动作，取消/确认是窗口级动作。
     // 分成两行能避免窄窗口下三按钮互相挤压，也让操作层级更清楚。
     set_bounds(state.save_button, editor_x, save_y, button_w, button_h);

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2
+
+- Removed the duplicate right-side `module` and `status` controls from the native `rule-check` editor.
+- Kept table-cell dropdowns as the single owner for status/module edits.
+- Expanded the right-side text editor area after removing the duplicate controls.
+
 ## 0.4.1
 
 - Added inline dropdown editing for the `status` and `module` cells in the native `rule-check` table.
