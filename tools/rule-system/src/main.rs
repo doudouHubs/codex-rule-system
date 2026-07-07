@@ -13,11 +13,9 @@ use std::sync::mpsc::{Sender, channel};
 use std::time::{SystemTime, UNIX_EPOCH};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CLIP_DEFAULT_PRECIS, ClientToScreen, CreateFontW, CreatePen, CreateSolidBrush,
-    DEFAULT_CHARSET, DEFAULT_QUALITY, DT_CENTER, DT_SINGLELINE, DT_VCENTER, DeleteObject,
-    DrawTextW, EndPaint, FF_DONTCARE, FW_NORMAL, FillRect, HBRUSH, HDC, HFONT, InvalidateRect,
-    OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_SOLID, RoundRect, ScreenToClient, SelectObject, SetBkColor,
-    SetBkMode, SetTextColor, TRANSPARENT,
+    CLIP_DEFAULT_PRECIS, ClientToScreen, CreateFontW, CreateSolidBrush, DEFAULT_CHARSET,
+    DEFAULT_QUALITY, DeleteObject, FF_DONTCARE, FW_NORMAL, FillRect, HBRUSH, HDC, HFONT,
+    OUT_DEFAULT_PRECIS, ScreenToClient, SetBkColor, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
@@ -40,8 +38,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SW_RESTORE, SW_SHOW, SWP_NOZORDER, SendMessageW, SetWindowLongPtrW, SetWindowPos,
     SetWindowTextW, ShowWindow, TranslateAcceleratorW, TranslateMessage, WINDOW_STYLE, WM_CLOSE,
     WM_COMMAND, WM_CREATE, WM_CTLCOLORDLG, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC,
-    WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_NOTIFY, WM_PAINT, WM_SETFONT, WM_SIZE, WNDCLASSW,
-    WS_BORDER, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_VISIBLE, WS_VSCROLL,
+    WM_DESTROY, WM_ERASEBKGND, WM_NOTIFY, WM_SETFONT, WM_SIZE, WNDCLASSW, WS_BORDER, WS_CHILD,
+    WS_OVERLAPPEDWINDOW, WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::PCWSTR;
 
@@ -52,7 +50,6 @@ const ID_CANCEL: usize = 1004;
 const ID_TITLE: usize = 1005;
 const ID_CONTENT: usize = 1006;
 const ID_TAGS: usize = 1007;
-const ID_STATUS: usize = 1008;
 const ID_SAVE_EDIT: usize = 1009;
 const ID_MODULE_FILTER: usize = 1010;
 const ID_STATUS_CELL: usize = 1012;
@@ -194,7 +191,6 @@ struct WindowState {
     title_edit: HWND,
     content_edit: HWND,
     tags_edit: HWND,
-    status_switch: HWND,
     status_cell_combo: HWND,
     module_cell_combo: HWND,
     save_button: HWND,
@@ -206,7 +202,6 @@ struct WindowState {
     action_sent: bool,
     editing_rule_index: Option<usize>,
     cell_editor: Option<CellEditor>,
-    status_value: String,
     title_label: HWND,
     hint_label: HWND,
     search_label: HWND,
@@ -2324,18 +2319,6 @@ fn run_picker_window(
         };
         let _ = RegisterClassW(&wnd_class);
 
-        let switch_class_name = to_wstring("RuleStatusSwitch");
-        let switch_class = WNDCLASSW {
-            style: CS_HREDRAW | CS_VREDRAW,
-            lpfnWndProc: Some(status_switch_proc),
-            hInstance: hinstance.into(),
-            lpszClassName: PCWSTR(switch_class_name.as_ptr()),
-            hCursor: LoadCursorW(None, windows::Win32::UI::WindowsAndMessaging::IDC_HAND)
-                .unwrap_or_default(),
-            ..Default::default()
-        };
-        let _ = RegisterClassW(&switch_class);
-
         let params = Box::new(CreateParams {
             sender,
             rules,
@@ -2472,7 +2455,6 @@ unsafe extern "system" fn wnd_proc(
             let content_edit = create_multiline_edit(hwnd, "", 690, 226, 372, 228, ID_CONTENT);
             let tags_field_label = create_label(hwnd, "标签（逗号分隔）", 690, 470, 360, 22);
             let tags_edit = create_edit(hwnd, "", 690, 494, 372, 30, ID_TAGS);
-            let status_switch = create_status_switch(hwnd, 0, 0, 1, 1, ID_STATUS);
             let status_cell_combo = create_cell_combo(hwnd, ID_STATUS_CELL);
             let module_cell_combo = create_cell_combo(hwnd, ID_MODULE_CELL);
             let save_button = create_button(hwnd, "保存编辑", 690, 614, 150, 36, ID_SAVE_EDIT);
@@ -2496,7 +2478,6 @@ unsafe extern "system" fn wnd_proc(
             set_font(content_edit, font);
             set_font(tags_field_label, font);
             set_font(tags_edit, font);
-            set_font(status_switch, font);
             set_font(status_cell_combo, font);
             set_font(module_cell_combo, font);
             set_font(save_button, font);
@@ -2515,7 +2496,6 @@ unsafe extern "system" fn wnd_proc(
                 title_edit,
                 content_edit,
                 tags_edit,
-                status_switch,
                 status_cell_combo,
                 module_cell_combo,
                 save_button,
@@ -2528,7 +2508,6 @@ unsafe extern "system" fn wnd_proc(
                 action_sent: false,
                 editing_rule_index: None,
                 cell_editor: None,
-                status_value: "active".to_string(),
                 title_label,
                 hint_label,
                 search_label,
@@ -2710,153 +2689,6 @@ unsafe extern "system" fn wnd_proc(
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
-}
-
-unsafe extern "system" fn status_switch_proc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    match msg {
-        WM_PAINT => {
-            let mut paint = PAINTSTRUCT::default();
-            let hdc = unsafe { BeginPaint(hwnd, &mut paint) };
-            draw_status_switch(hwnd, hdc);
-            unsafe {
-                let _ = EndPaint(hwnd, &paint);
-            }
-            LRESULT(0)
-        }
-        WM_LBUTTONDOWN => {
-            let parent = unsafe { GetParent(hwnd).unwrap_or(HWND(null_mut())) };
-            let ptr = unsafe { GetWindowLongPtrW(parent, GWLP_USERDATA) as *mut WindowState };
-            if ptr.is_null() {
-                return LRESULT(0);
-            }
-
-            let mut rect = RECT::default();
-            unsafe {
-                let _ = GetClientRect(hwnd, &mut rect);
-            }
-            let width = (rect.right - rect.left).max(1);
-            let x = (lparam.0 & 0xffff) as i16 as i32;
-            let next_status = if x < width / 2 {
-                "active"
-            } else {
-                "deprecated"
-            };
-
-            let state = unsafe { &mut *ptr };
-            if state.status_value != next_status {
-                state.status_value = next_status.to_string();
-                invalidate_status_switch(state);
-            }
-            LRESULT(0)
-        }
-        _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
-    }
-}
-
-fn draw_status_switch(hwnd: HWND, hdc: HDC) {
-    let status = current_switch_status(hwnd);
-    let active_selected = status == "active";
-    let mut rect = RECT::default();
-    unsafe {
-        let _ = GetClientRect(hwnd, &mut rect);
-    }
-    let width = (rect.right - rect.left).max(1);
-    let height = (rect.bottom - rect.top).max(1);
-    let mid = width / 2;
-
-    let track_brush = unsafe { CreateSolidBrush(rgb(232, 236, 240)) };
-    let track_pen = unsafe { CreatePen(PS_SOLID, 1, rgb(177, 186, 198)) };
-    let old_brush = unsafe { SelectObject(hdc, track_brush) };
-    let old_pen = unsafe { SelectObject(hdc, track_pen) };
-    unsafe {
-        let _ = RoundRect(hdc, 0, 0, width, height, height, height);
-    }
-
-    let selected_color = if active_selected {
-        rgb(35, 134, 84)
-    } else {
-        rgb(118, 124, 134)
-    };
-    let selected_brush = unsafe { CreateSolidBrush(selected_color) };
-    let selected_pen = unsafe { CreatePen(PS_SOLID, 1, selected_color) };
-    unsafe {
-        let _ = SelectObject(hdc, selected_brush);
-        let _ = SelectObject(hdc, selected_pen);
-        if active_selected {
-            // 选中块略微跨过中线，避免胶囊中间出现一条突兀空隙。
-            let _ = RoundRect(hdc, 2, 2, mid + 14, height - 2, height - 4, height - 4);
-        } else {
-            let _ = RoundRect(
-                hdc,
-                mid - 14,
-                2,
-                width - 2,
-                height - 2,
-                height - 4,
-                height - 4,
-            );
-        }
-    }
-
-    unsafe {
-        let _ = SelectObject(hdc, old_brush);
-        let _ = SelectObject(hdc, old_pen);
-        let _ = DeleteObject(track_brush);
-        let _ = DeleteObject(track_pen);
-        let _ = DeleteObject(selected_brush);
-        let _ = DeleteObject(selected_pen);
-        SetBkMode(hdc, TRANSPARENT);
-    }
-
-    let mut active_rect = RECT {
-        left: 0,
-        top: 0,
-        right: mid,
-        bottom: height,
-    };
-    let mut deprecated_rect = RECT {
-        left: mid,
-        top: 0,
-        right: width,
-        bottom: height,
-    };
-    draw_switch_text(hdc, "active", &mut active_rect, active_selected);
-    draw_switch_text(hdc, "deprecated", &mut deprecated_rect, !active_selected);
-}
-
-fn draw_switch_text(hdc: HDC, text: &str, rect: &mut RECT, selected: bool) {
-    let mut text = to_wstring(text);
-    // DrawTextW 的 windows-rs 包装按 slice 长度绘制；去掉 C 字符串终止符，
-    // 否则部分字体会把结尾 NUL 显示成异常占位字符。
-    let _ = text.pop();
-    if selected {
-        unsafe {
-            SetTextColor(hdc, rgb(255, 255, 255));
-        }
-    } else {
-        unsafe {
-            SetTextColor(hdc, rgb(57, 64, 75));
-        }
-    }
-    let format = DT_CENTER | DT_VCENTER | DT_SINGLELINE;
-    unsafe {
-        let _ = DrawTextW(hdc, &mut text, rect, format);
-    }
-}
-
-fn current_switch_status(hwnd: HWND) -> String {
-    let parent = unsafe { GetParent(hwnd).unwrap_or(HWND(null_mut())) };
-    let ptr = unsafe { GetWindowLongPtrW(parent, GWLP_USERDATA) as *const WindowState };
-    if ptr.is_null() {
-        return "active".to_string();
-    }
-    let state = unsafe { &*ptr };
-    normalize_ui_status(&state.status_value)
 }
 
 fn refresh_visible_rules(state: &mut WindowState) {
@@ -3364,12 +3196,6 @@ fn update_status_label(state: &WindowState) {
     );
 }
 
-fn invalidate_status_switch(state: &WindowState) {
-    unsafe {
-        let _ = InvalidateRect(state.status_switch, None, true);
-    }
-}
-
 fn current_visible_index(state: &WindowState) -> Option<usize> {
     if state.visible_indices.is_empty() {
         return None;
@@ -3564,26 +3390,6 @@ fn create_button(
             PCWSTR(to_wstring("BUTTON").as_ptr()),
             PCWSTR(to_wstring(text).as_ptr()),
             WS_CHILD,
-            x,
-            y,
-            width,
-            height,
-            hwnd,
-            HMENU(id as *mut core::ffi::c_void),
-            None,
-            None,
-        )
-        .unwrap_or(HWND(null_mut()))
-    }
-}
-
-fn create_status_switch(hwnd: HWND, x: i32, y: i32, width: i32, height: i32, id: usize) -> HWND {
-    unsafe {
-        CreateWindowExW(
-            Default::default(),
-            PCWSTR(to_wstring("RuleStatusSwitch").as_ptr()),
-            PCWSTR(to_wstring("").as_ptr()),
-            WS_CHILD | WS_VISIBLE,
             x,
             y,
             width,

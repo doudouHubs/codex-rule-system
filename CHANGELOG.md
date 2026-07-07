@@ -4,6 +4,7 @@
 
 - Removed the duplicate right-side `module` and `status` controls from the native `rule-check` editor.
 - Kept table-cell dropdowns as the single owner for status/module edits.
+- Removed the retired hidden status switch control and Win32 drawing path.
 - Expanded the right-side text editor area after removing the duplicate controls.
 
 ## 0.4.1
