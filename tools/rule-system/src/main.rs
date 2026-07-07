@@ -32,8 +32,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     ACCEL, CB_ADDSTRING, CB_GETCURSEL, CB_GETLBTEXT, CB_RESETCONTENT, CB_SETCURSEL,
     CB_SHOWDROPDOWN, CBN_SELCHANGE, CBS_DROPDOWNLIST, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW,
     CW_USEDEFAULT, CreateAcceleratorTableW, CreateWindowExW, DefWindowProcW,
-    DestroyAcceleratorTable, DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL, ES_AUTOVSCROLL,
-    ES_MULTILINE, FVIRTKEY, GWLP_USERDATA, GetClientRect, GetMessageW, GetParent,
+    DestroyAcceleratorTable, DestroyWindow, DispatchMessageW, EN_KILLFOCUS, ES_AUTOHSCROLL,
+    ES_AUTOVSCROLL, ES_MULTILINE, FVIRTKEY, GWLP_USERDATA, GetClientRect, GetMessageW, GetParent,
     GetWindowLongPtrW, HMENU, LoadCursorW, MSG, PostQuitMessage, RegisterClassW, SW_HIDE,
     SW_RESTORE, SW_SHOW, SWP_NOZORDER, SendMessageW, SetWindowLongPtrW, SetWindowPos,
     SetWindowTextW, ShowWindow, TranslateAcceleratorW, TranslateMessage, WINDOW_STYLE, WM_CLOSE,
@@ -54,8 +54,12 @@ const ID_SAVE_EDIT: usize = 1009;
 const ID_MODULE_FILTER: usize = 1010;
 const ID_STATUS_CELL: usize = 1012;
 const ID_MODULE_CELL: usize = 1013;
+const ID_TEXT_CELL: usize = 1014;
 const STATUS_COLUMN: usize = 2;
 const MODULE_COLUMN: usize = 3;
+const TAGS_COLUMN: usize = 4;
+const TITLE_COLUMN: usize = 5;
+const CONTENT_COLUMN: usize = 6;
 const ACTIVE_STATUS: &str = "active";
 const DEPRECATED_STATUS: &str = "deprecated";
 const GLOBAL_MODULE: &str = "global";
@@ -193,6 +197,7 @@ struct WindowState {
     tags_edit: HWND,
     status_cell_combo: HWND,
     module_cell_combo: HWND,
+    text_cell_edit: HWND,
     save_button: HWND,
     confirm_button: HWND,
     cancel_button: HWND,
@@ -219,6 +224,9 @@ struct WindowState {
 enum CellEditorKind {
     Status,
     Module,
+    Tags,
+    Title,
+    Content,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2443,7 +2451,7 @@ unsafe extern "system" fn wnd_proc(
             let editor_heading_label = create_label(hwnd, "编辑当前规则", 690, 66, 360, 28);
             let editor_hint_label = create_label(
                 hwnd,
-                "右侧编辑标题、内容和标签；状态/模块请直接在左侧表格单元格下拉切换。",
+                "表格可直接编辑标题、标签、内容预览；右侧适合编辑长内容。",
                 690,
                 96,
                 360,
@@ -2457,6 +2465,7 @@ unsafe extern "system" fn wnd_proc(
             let tags_edit = create_edit(hwnd, "", 690, 494, 372, 30, ID_TAGS);
             let status_cell_combo = create_cell_combo(hwnd, ID_STATUS_CELL);
             let module_cell_combo = create_cell_combo(hwnd, ID_MODULE_CELL);
+            let text_cell_edit = create_cell_text_edit(hwnd, ID_TEXT_CELL);
             let save_button = create_button(hwnd, "保存编辑", 690, 614, 150, 36, ID_SAVE_EDIT);
             let cancel_button = create_button(hwnd, "取消 Esc", 756, 614, 140, 36, ID_CANCEL);
             let confirm_button =
@@ -2480,6 +2489,7 @@ unsafe extern "system" fn wnd_proc(
             set_font(tags_edit, font);
             set_font(status_cell_combo, font);
             set_font(module_cell_combo, font);
+            set_font(text_cell_edit, font);
             set_font(save_button, font);
             set_font(cancel_button, font);
             set_font(confirm_button, font);
@@ -2498,6 +2508,7 @@ unsafe extern "system" fn wnd_proc(
                 tags_edit,
                 status_cell_combo,
                 module_cell_combo,
+                text_cell_edit,
                 save_button,
                 confirm_button,
                 cancel_button,
@@ -2554,30 +2565,34 @@ unsafe extern "system" fn wnd_proc(
                 commit_cell_combo_selection(state, id);
                 return LRESULT(0);
             }
+            if id == ID_TEXT_CELL && notification == EN_KILLFOCUS as u16 {
+                commit_cell_text_edit(state);
+                return LRESULT(0);
+            }
             match id {
                 ID_SEARCH => {
-                    hide_cell_editors(state);
+                    finish_active_cell_editor(state);
                     save_editor_to_current_rule(state);
                     refresh_visible_rules(state);
                     select_first_visible_rule(state);
                     load_editor_from_current_selection(state);
                 }
                 ID_MODULE_FILTER => {
-                    hide_cell_editors(state);
+                    finish_active_cell_editor(state);
                     save_editor_to_current_rule(state);
                     refresh_visible_rules(state);
                     select_first_visible_rule(state);
                     load_editor_from_current_selection(state);
                 }
                 ID_SAVE_EDIT => {
-                    hide_cell_editors(state);
+                    finish_active_cell_editor(state);
                     save_editor_to_current_rule(state);
                     refresh_visible_rules(state);
                     restore_editor_selection(state);
                     load_editor_from_current_selection(state);
                 }
                 ID_CONFIRM => {
-                    hide_cell_editors(state);
+                    finish_active_cell_editor(state);
                     finish_with_selection(hwnd, state)
                 }
                 ID_CANCEL => finish_cancelled(hwnd, state),
@@ -2598,7 +2613,7 @@ unsafe extern "system" fn wnd_proc(
             let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState };
             if !ptr.is_null() {
                 let state = unsafe { &mut *ptr };
-                hide_cell_editors(state);
+                finish_active_cell_editor(state);
                 apply_layout(hwnd, state);
             }
             LRESULT(0)
@@ -2860,7 +2875,7 @@ fn handle_list_notify(state: &mut WindowState, lparam: LPARAM) {
 fn handle_list_click(state: &mut WindowState, lparam: LPARAM) {
     let event = unsafe { &*(lparam.0 as *const NMLISTVIEW) };
     if event.iItem < 0 {
-        hide_cell_editors(state);
+        finish_active_cell_editor(state);
         save_editor_to_current_rule(state);
         load_editor_from_current_selection(state);
         return;
@@ -2869,10 +2884,11 @@ fn handle_list_click(state: &mut WindowState, lparam: LPARAM) {
     let visible_index = event.iItem as usize;
     let subitem = event.iSubItem.max(0) as usize;
     let Some(rule_index) = state.visible_indices.get(visible_index).copied() else {
-        hide_cell_editors(state);
+        finish_active_cell_editor(state);
         return;
     };
 
+    finish_active_cell_editor(state);
     save_editor_to_current_rule(state);
     select_visible_row(state.list, visible_index);
     state.editing_rule_index = Some(rule_index);
@@ -2881,6 +2897,13 @@ fn handle_list_click(state: &mut WindowState, lparam: LPARAM) {
     match subitem {
         STATUS_COLUMN => show_status_cell_combo(state, visible_index, rule_index),
         MODULE_COLUMN => show_module_cell_combo(state, visible_index, rule_index),
+        TAGS_COLUMN => show_text_cell_edit(state, visible_index, rule_index, CellEditorKind::Tags),
+        TITLE_COLUMN => {
+            show_text_cell_edit(state, visible_index, rule_index, CellEditorKind::Title)
+        }
+        CONTENT_COLUMN => {
+            show_text_cell_edit(state, visible_index, rule_index, CellEditorKind::Content)
+        }
         _ => hide_cell_editors(state),
     }
 }
@@ -2944,6 +2967,40 @@ fn show_module_cell_combo(state: &mut WindowState, visible_index: usize, rule_in
         CellEditorKind::Module,
         rule_index,
     );
+}
+
+fn show_text_cell_edit(
+    state: &mut WindowState,
+    visible_index: usize,
+    rule_index: usize,
+    kind: CellEditorKind,
+) {
+    let Some(rule) = state.rules.get(rule_index) else {
+        return;
+    };
+    let (subitem, text) = match kind {
+        CellEditorKind::Tags => (TAGS_COLUMN, rule.tags.join(",")),
+        CellEditorKind::Title => (TITLE_COLUMN, rule.title.clone()),
+        CellEditorKind::Content => (CONTENT_COLUMN, rule.content.clone()),
+        CellEditorKind::Status | CellEditorKind::Module => return,
+    };
+    hide_cell_editors(state);
+    let Some(rect) = list_subitem_rect_in_parent(state.list, visible_index, subitem) else {
+        return;
+    };
+    let height = (rect.bottom - rect.top).max(24);
+    let width = (rect.right - rect.left).max(80);
+    set_window_text(state.text_cell_edit, &text);
+    set_bounds(state.text_cell_edit, rect.left, rect.top, width, height);
+    state.cell_editor = Some(CellEditor {
+        rule_index,
+        visible_index,
+        kind,
+    });
+    unsafe {
+        let _ = ShowWindow(state.text_cell_edit, SW_SHOW);
+        let _ = SetFocus(state.text_cell_edit);
+    }
 }
 
 fn show_cell_combo(
@@ -3040,10 +3097,70 @@ fn commit_cell_combo_selection(state: &mut WindowState, combo_id: usize) {
             CellEditorKind::Module => {
                 rule.module = read_module_edit(state.module_cell_combo);
             }
+            CellEditorKind::Tags | CellEditorKind::Title | CellEditorKind::Content => {}
         }
         refresh_rule_text(rule);
     }
     hide_cell_editors(state);
+    refresh_visible_rules(state);
+    restore_rule_selection_or_first(state, editor.rule_index, editor.visible_index);
+    load_editor_from_current_selection(state);
+}
+
+fn finish_active_cell_editor(state: &mut WindowState) {
+    let Some(editor) = state.cell_editor else {
+        return;
+    };
+    match editor.kind {
+        CellEditorKind::Tags | CellEditorKind::Title | CellEditorKind::Content => {
+            commit_cell_text_edit(state)
+        }
+        CellEditorKind::Status | CellEditorKind::Module => hide_cell_editors(state),
+    }
+}
+
+fn commit_cell_text_edit(state: &mut WindowState) {
+    let Some(editor) = state.cell_editor else {
+        return;
+    };
+    if !matches!(
+        editor.kind,
+        CellEditorKind::Tags | CellEditorKind::Title | CellEditorKind::Content
+    ) {
+        return;
+    }
+
+    let next_text = read_window_text(state.text_cell_edit);
+    // 先清空当前 overlay 状态再隐藏控件，避免 ShowWindow 触发 EN_KILLFOCUS 时递归提交。
+    state.cell_editor = None;
+    unsafe {
+        let _ = ShowWindow(state.text_cell_edit, SW_HIDE);
+    }
+
+    if let Some(rule) = state.rules.get_mut(editor.rule_index) {
+        match editor.kind {
+            CellEditorKind::Tags => {
+                rule.tags = split_ui_tags(&next_text);
+            }
+            CellEditorKind::Title => {
+                let title = next_text.trim();
+                // 标题是规则识别锚点，空标题会让列表和落库行为割裂；空输入视为放弃本次格内修改。
+                if !title.is_empty() {
+                    rule.title = title.to_string();
+                }
+            }
+            CellEditorKind::Content => {
+                let content = next_text.trim();
+                // 内容正文不能为空；如果用户需要大段清理，应在右侧多行编辑器里显式处理。
+                if !content.is_empty() {
+                    rule.content = content.to_string();
+                }
+            }
+            CellEditorKind::Status | CellEditorKind::Module => {}
+        }
+        refresh_rule_text(rule);
+    }
+
     refresh_visible_rules(state);
     restore_rule_selection_or_first(state, editor.rule_index, editor.visible_index);
     load_editor_from_current_selection(state);
@@ -3074,6 +3191,7 @@ fn hide_cell_editors(state: &mut WindowState) {
     unsafe {
         let _ = ShowWindow(state.status_cell_combo, SW_HIDE);
         let _ = ShowWindow(state.module_cell_combo, SW_HIDE);
+        let _ = ShowWindow(state.text_cell_edit, SW_HIDE);
     }
 }
 
@@ -3430,6 +3548,26 @@ fn create_cell_combo(hwnd: HWND, id: usize) -> HWND {
             PCWSTR(to_wstring("COMBOBOX").as_ptr()),
             PCWSTR(to_wstring("").as_ptr()),
             WINDOW_STYLE(WS_CHILD.0 | WS_BORDER.0 | CBS_DROPDOWNLIST as u32),
+            0,
+            0,
+            1,
+            1,
+            hwnd,
+            HMENU(id as *mut core::ffi::c_void),
+            None,
+            None,
+        )
+        .unwrap_or(HWND(null_mut()))
+    }
+}
+
+fn create_cell_text_edit(hwnd: HWND, id: usize) -> HWND {
+    unsafe {
+        CreateWindowExW(
+            Default::default(),
+            PCWSTR(to_wstring("EDIT").as_ptr()),
+            PCWSTR(to_wstring("").as_ptr()),
+            WINDOW_STYLE(WS_CHILD.0 | WS_BORDER.0 | ES_AUTOHSCROLL as u32),
             0,
             0,
             1,

@@ -1,6 +1,6 @@
 {
   "name": "rule-system",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Project-level SQLite rule library with module enums and current-session rule selection workflows for Codex projects.",
   "author": {
     "name": "X1"

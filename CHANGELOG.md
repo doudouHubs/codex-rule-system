@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.3
+
+- Added inline text editing for the `tags`, `title`, and `content preview` cells in the native `rule-check` table.
+- Kept `status` and `module` on table-cell dropdown editors, preserving a single owner for enum edits.
+- Synchronized inline text edits back to the right-side editor before saving or selecting rules.
+
 ## 0.4.2
 
 - Removed the duplicate right-side `module` and `status` controls from the native `rule-check` editor.
