@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.5
+
+- Fixed the native `rule-check` bottom action buttons by creating them with `WS_VISIBLE`.
+- Kept the right-side current-rule editor removed; table cells remain the only edit surface.
+
 ## 0.4.4
 
 - Removed the right-side current-rule editor from the native `rule-check` window.

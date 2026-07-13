@@ -3369,7 +3369,9 @@ fn create_button(
             Default::default(),
             PCWSTR(to_wstring("BUTTON").as_ptr()),
             PCWSTR(to_wstring(text).as_ptr()),
-            WS_CHILD,
+            // Win32 子控件不会因为父窗口可见就自动显示；按钮必须显式带
+            // WS_VISIBLE，否则布局坐标正确也会“存在但不可见”。
+            WS_CHILD | WS_VISIBLE,
             x,
             y,
             width,
