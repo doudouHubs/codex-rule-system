@@ -33,12 +33,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CB_SHOWDROPDOWN, CBN_SELCHANGE, CBS_DROPDOWNLIST, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW,
     CW_USEDEFAULT, CreateAcceleratorTableW, CreateWindowExW, DefWindowProcW,
     DestroyAcceleratorTable, DestroyWindow, DispatchMessageW, EN_KILLFOCUS, ES_AUTOHSCROLL,
-    ES_AUTOVSCROLL, ES_MULTILINE, FVIRTKEY, GWLP_USERDATA, GetClientRect, GetMessageW, GetParent,
-    GetWindowLongPtrW, HMENU, LoadCursorW, MSG, PostQuitMessage, RegisterClassW, SW_HIDE,
-    SW_RESTORE, SW_SHOW, SWP_NOZORDER, SendMessageW, SetWindowLongPtrW, SetWindowPos,
-    SetWindowTextW, ShowWindow, TranslateAcceleratorW, TranslateMessage, WINDOW_STYLE, WM_CLOSE,
-    WM_COMMAND, WM_CREATE, WM_CTLCOLORDLG, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC,
-    WM_DESTROY, WM_ERASEBKGND, WM_NOTIFY, WM_SETFONT, WM_SIZE, WNDCLASSW, WS_BORDER, WS_CHILD,
+    FVIRTKEY, GWLP_USERDATA, GetClientRect, GetMessageW, GetParent, GetWindowLongPtrW, HMENU,
+    LoadCursorW, MSG, PostQuitMessage, RegisterClassW, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOZORDER,
+    SendMessageW, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow,
+    TranslateAcceleratorW, TranslateMessage, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CREATE,
+    WM_CTLCOLORDLG, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC, WM_DESTROY,
+    WM_ERASEBKGND, WM_NOTIFY, WM_SETFONT, WM_SIZE, WNDCLASSW, WS_BORDER, WS_CHILD,
     WS_OVERLAPPEDWINDOW, WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::PCWSTR;
@@ -47,10 +47,6 @@ const ID_SEARCH: usize = 1001;
 const ID_LIST: usize = 1002;
 const ID_CONFIRM: usize = 1003;
 const ID_CANCEL: usize = 1004;
-const ID_TITLE: usize = 1005;
-const ID_CONTENT: usize = 1006;
-const ID_TAGS: usize = 1007;
-const ID_SAVE_EDIT: usize = 1009;
 const ID_MODULE_FILTER: usize = 1010;
 const ID_STATUS_CELL: usize = 1012;
 const ID_MODULE_CELL: usize = 1013;
@@ -192,13 +188,9 @@ struct WindowState {
     search: HWND,
     module_filter: HWND,
     list: HWND,
-    title_edit: HWND,
-    content_edit: HWND,
-    tags_edit: HWND,
     status_cell_combo: HWND,
     module_cell_combo: HWND,
     text_cell_edit: HWND,
-    save_button: HWND,
     confirm_button: HWND,
     cancel_button: HWND,
     bg_brush: HBRUSH,
@@ -212,11 +204,6 @@ struct WindowState {
     search_label: HWND,
     module_filter_label: HWND,
     list_status_label: HWND,
-    editor_heading_label: HWND,
-    editor_hint_label: HWND,
-    title_field_label: HWND,
-    content_field_label: HWND,
-    tags_field_label: HWND,
     font_title: HFONT,
 }
 
@@ -2436,7 +2423,7 @@ unsafe extern "system" fn wnd_proc(
             let title_label = create_label(hwnd, "Rule Check", 18, 18, 220, 32);
             let hint_label = create_label(
                 hwnd,
-                "复选框 = 最终 pick；高亮行 = 右侧编辑对象。搜索只过滤可见行，不会清空已勾选规则。",
+                "复选框 = 最终 pick；点击表格单元格可直接编辑。搜索只过滤可见行，不会清空已勾选规则。",
                 252,
                 24,
                 820,
@@ -2448,25 +2435,9 @@ unsafe extern "system" fn wnd_proc(
             let module_filter = create_combo(hwnd, 470, 90, 188, 220, ID_MODULE_FILTER);
             let list_status_label = create_label(hwnd, "", 18, 128, 640, 22);
             let list = create_list(hwnd, 18, 154, 640, 438, ID_LIST);
-            let editor_heading_label = create_label(hwnd, "编辑当前规则", 690, 66, 360, 28);
-            let editor_hint_label = create_label(
-                hwnd,
-                "表格可直接编辑标题、标签、内容预览；右侧适合编辑长内容。",
-                690,
-                96,
-                360,
-                22,
-            );
-            let title_field_label = create_label(hwnd, "标题", 690, 132, 360, 22);
-            let title_edit = create_edit(hwnd, "", 690, 156, 372, 30, ID_TITLE);
-            let content_field_label = create_label(hwnd, "内容", 690, 202, 360, 22);
-            let content_edit = create_multiline_edit(hwnd, "", 690, 226, 372, 228, ID_CONTENT);
-            let tags_field_label = create_label(hwnd, "标签（逗号分隔）", 690, 470, 360, 22);
-            let tags_edit = create_edit(hwnd, "", 690, 494, 372, 30, ID_TAGS);
             let status_cell_combo = create_cell_combo(hwnd, ID_STATUS_CELL);
             let module_cell_combo = create_cell_combo(hwnd, ID_MODULE_CELL);
             let text_cell_edit = create_cell_text_edit(hwnd, ID_TEXT_CELL);
-            let save_button = create_button(hwnd, "保存编辑", 690, 614, 150, 36, ID_SAVE_EDIT);
             let cancel_button = create_button(hwnd, "取消 Esc", 756, 614, 140, 36, ID_CANCEL);
             let confirm_button =
                 create_button(hwnd, "保存并选取 Enter", 916, 614, 156, 36, ID_CONFIRM);
@@ -2479,18 +2450,9 @@ unsafe extern "system" fn wnd_proc(
             set_font(module_filter, font);
             set_font(list_status_label, font);
             set_font(list, font);
-            set_font(editor_heading_label, font_title);
-            set_font(editor_hint_label, font);
-            set_font(title_field_label, font);
-            set_font(title_edit, font);
-            set_font(content_field_label, font);
-            set_font(content_edit, font);
-            set_font(tags_field_label, font);
-            set_font(tags_edit, font);
             set_font(status_cell_combo, font);
             set_font(module_cell_combo, font);
             set_font(text_cell_edit, font);
-            set_font(save_button, font);
             set_font(cancel_button, font);
             set_font(confirm_button, font);
 
@@ -2503,13 +2465,9 @@ unsafe extern "system" fn wnd_proc(
                 search,
                 module_filter,
                 list,
-                title_edit,
-                content_edit,
-                tags_edit,
                 status_cell_combo,
                 module_cell_combo,
                 text_cell_edit,
-                save_button,
                 confirm_button,
                 cancel_button,
                 bg_brush,
@@ -2524,11 +2482,6 @@ unsafe extern "system" fn wnd_proc(
                 search_label,
                 module_filter_label,
                 list_status_label,
-                editor_heading_label,
-                editor_hint_label,
-                title_field_label,
-                content_field_label,
-                tags_field_label,
             });
             populate_module_filter(state.module_filter, &state.modules, &params.initial_module);
             populate_status_combo(state.status_cell_combo, ACTIVE_STATUS);
@@ -2543,7 +2496,7 @@ unsafe extern "system" fn wnd_proc(
                 .collect();
             refresh_visible_rules(&mut state);
             select_first_visible_rule(&mut state);
-            load_editor_from_current_selection(&mut state);
+            sync_editing_rule_from_selection(&mut state);
             let state_ptr = Box::into_raw(state);
             unsafe {
                 SetWindowLongPtrW(hwnd, GWLP_USERDATA, state_ptr as isize);
@@ -2572,24 +2525,15 @@ unsafe extern "system" fn wnd_proc(
             match id {
                 ID_SEARCH => {
                     finish_active_cell_editor(state);
-                    save_editor_to_current_rule(state);
                     refresh_visible_rules(state);
                     select_first_visible_rule(state);
-                    load_editor_from_current_selection(state);
+                    sync_editing_rule_from_selection(state);
                 }
                 ID_MODULE_FILTER => {
                     finish_active_cell_editor(state);
-                    save_editor_to_current_rule(state);
                     refresh_visible_rules(state);
                     select_first_visible_rule(state);
-                    load_editor_from_current_selection(state);
-                }
-                ID_SAVE_EDIT => {
-                    finish_active_cell_editor(state);
-                    save_editor_to_current_rule(state);
-                    refresh_visible_rules(state);
-                    restore_editor_selection(state);
-                    load_editor_from_current_selection(state);
+                    sync_editing_rule_from_selection(state);
                 }
                 ID_CONFIRM => {
                     finish_active_cell_editor(state);
@@ -2652,17 +2596,13 @@ unsafe extern "system" fn wnd_proc(
             let state = unsafe { &*ptr };
             let hdc = HDC(wparam.0 as *mut core::ffi::c_void);
             let control = HWND(lparam.0 as *mut core::ffi::c_void);
-            let text_color =
-                if control == state.title_label || control == state.editor_heading_label {
-                    rgb(18, 34, 58)
-                } else if control == state.hint_label
-                    || control == state.editor_hint_label
-                    || control == state.list_status_label
-                {
-                    rgb(82, 91, 105)
-                } else {
-                    rgb(48, 52, 58)
-                };
+            let text_color = if control == state.title_label {
+                rgb(18, 34, 58)
+            } else if control == state.hint_label || control == state.list_status_label {
+                rgb(82, 91, 105)
+            } else {
+                rgb(48, 52, 58)
+            };
             unsafe {
                 SetBkMode(hdc, TRANSPARENT);
                 SetTextColor(hdc, text_color);
@@ -2876,8 +2816,7 @@ fn handle_list_click(state: &mut WindowState, lparam: LPARAM) {
     let event = unsafe { &*(lparam.0 as *const NMLISTVIEW) };
     if event.iItem < 0 {
         finish_active_cell_editor(state);
-        save_editor_to_current_rule(state);
-        load_editor_from_current_selection(state);
+        sync_editing_rule_from_selection(state);
         return;
     }
 
@@ -2889,10 +2828,9 @@ fn handle_list_click(state: &mut WindowState, lparam: LPARAM) {
     };
 
     finish_active_cell_editor(state);
-    save_editor_to_current_rule(state);
     select_visible_row(state.list, visible_index);
     state.editing_rule_index = Some(rule_index);
-    load_editor_from_current_selection(state);
+    update_status_label(state);
 
     match subitem {
         STATUS_COLUMN => show_status_cell_combo(state, visible_index, rule_index),
@@ -2934,8 +2872,7 @@ fn handle_list_item_changed(state: &mut WindowState, lparam: LPARAM) {
         && ((event.uNewState ^ event.uOldState) & (LVIS_SELECTED.0 | LVIS_FOCUSED.0)) != 0
         && (event.uNewState & (LVIS_SELECTED.0 | LVIS_FOCUSED.0)) != 0
     {
-        save_editor_to_current_rule(state);
-        load_editor_from_current_selection(state);
+        sync_editing_rule_from_selection(state);
     }
 }
 
@@ -3104,7 +3041,7 @@ fn commit_cell_combo_selection(state: &mut WindowState, combo_id: usize) {
     hide_cell_editors(state);
     refresh_visible_rules(state);
     restore_rule_selection_or_first(state, editor.rule_index, editor.visible_index);
-    load_editor_from_current_selection(state);
+    sync_editing_rule_from_selection(state);
 }
 
 fn finish_active_cell_editor(state: &mut WindowState) {
@@ -3151,7 +3088,7 @@ fn commit_cell_text_edit(state: &mut WindowState) {
             }
             CellEditorKind::Content => {
                 let content = next_text.trim();
-                // 内容正文不能为空；如果用户需要大段清理，应在右侧多行编辑器里显式处理。
+                // 内容正文不能为空；空输入视为放弃本次格内修改，避免把规则正文误清空。
                 if !content.is_empty() {
                     rule.content = content.to_string();
                 }
@@ -3163,7 +3100,7 @@ fn commit_cell_text_edit(state: &mut WindowState) {
 
     refresh_visible_rules(state);
     restore_rule_selection_or_first(state, editor.rule_index, editor.visible_index);
-    load_editor_from_current_selection(state);
+    sync_editing_rule_from_selection(state);
 }
 
 fn restore_rule_selection_or_first(
@@ -3196,8 +3133,6 @@ fn hide_cell_editors(state: &mut WindowState) {
 }
 
 fn finish_with_selection(hwnd: HWND, state: &mut WindowState) {
-    save_editor_to_current_rule(state);
-
     let selected_ids = state
         .rules
         .iter()
@@ -3218,25 +3153,10 @@ fn finish_with_selection(hwnd: HWND, state: &mut WindowState) {
 fn select_first_visible_rule(state: &mut WindowState) {
     if state.visible_indices.is_empty() {
         state.editing_rule_index = None;
+        update_status_label(state);
         return;
     }
     select_visible_row(state.list, 0);
-}
-
-fn restore_editor_selection(state: &mut WindowState) {
-    let Some(rule_index) = state.editing_rule_index else {
-        select_first_visible_rule(state);
-        return;
-    };
-    let Some(visible_index) = state
-        .visible_indices
-        .iter()
-        .position(|candidate| *candidate == rule_index)
-    else {
-        select_first_visible_rule(state);
-        return;
-    };
-    select_visible_row(state.list, visible_index);
 }
 
 fn select_visible_row(list: HWND, visible_index: usize) {
@@ -3258,13 +3178,10 @@ fn select_visible_row(list: HWND, visible_index: usize) {
     }
 }
 
-fn load_editor_from_current_selection(state: &mut WindowState) {
+fn sync_editing_rule_from_selection(state: &mut WindowState) {
     let visible_index = current_visible_index(state);
     let Some(visible_index) = visible_index else {
         state.editing_rule_index = None;
-        set_window_text(state.title_edit, "");
-        set_window_text(state.content_edit, "");
-        set_window_text(state.tags_edit, "");
         update_status_label(state);
         return;
     };
@@ -3273,27 +3190,7 @@ fn load_editor_from_current_selection(state: &mut WindowState) {
         update_status_label(state);
         return;
     };
-    let rule = &state.rules[rule_index];
     state.editing_rule_index = Some(rule_index);
-    set_window_text(state.title_edit, &rule.title);
-    set_window_text(state.content_edit, &rule.content);
-    set_window_text(state.tags_edit, &rule.tags.join(","));
-    update_status_label(state);
-}
-
-fn save_editor_to_current_rule(state: &mut WindowState) {
-    let Some(rule_index) = state.editing_rule_index else {
-        return;
-    };
-    let Some(rule) = state.rules.get_mut(rule_index) else {
-        return;
-    };
-    rule.title = read_window_text(state.title_edit).trim().to_string();
-    rule.content = read_window_text(state.content_edit).trim().to_string();
-    rule.tags = split_ui_tags(&read_window_text(state.tags_edit));
-    // 状态和模块已经收敛到表格单元格下拉，右侧编辑区只负责文本字段。
-    // 这里故意不读取隐藏控件，避免旧右侧入口把表格内联修改覆盖回去。
-    refresh_rule_text(rule);
     update_status_label(state);
 }
 
@@ -3373,41 +3270,6 @@ fn create_edit(hwnd: HWND, text: &str, x: i32, y: i32, width: i32, height: i32, 
             PCWSTR(to_wstring("EDIT").as_ptr()),
             PCWSTR(to_wstring(text).as_ptr()),
             WINDOW_STYLE(WS_CHILD.0 | WS_VISIBLE.0 | WS_BORDER.0 | ES_AUTOHSCROLL as u32),
-            x,
-            y,
-            width,
-            height,
-            hwnd,
-            HMENU(id as *mut core::ffi::c_void),
-            None,
-            None,
-        )
-        .unwrap_or(HWND(null_mut()))
-    }
-}
-
-fn create_multiline_edit(
-    hwnd: HWND,
-    text: &str,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-    id: usize,
-) -> HWND {
-    unsafe {
-        CreateWindowExW(
-            Default::default(),
-            PCWSTR(to_wstring("EDIT").as_ptr()),
-            PCWSTR(to_wstring(text).as_ptr()),
-            WINDOW_STYLE(
-                WS_CHILD.0
-                    | WS_VISIBLE.0
-                    | WS_BORDER.0
-                    | WS_VSCROLL.0
-                    | ES_MULTILINE as u32
-                    | ES_AUTOVSCROLL as u32,
-            ),
             x,
             y,
             width,
@@ -3773,16 +3635,8 @@ fn apply_layout(hwnd: HWND, state: &WindowState) {
     let confirm_w = 170;
     let confirm_x = width - pad - confirm_w;
     let cancel_x = confirm_x - 18 - button_w;
-    let editor_x = (width * 3 / 5).max(430);
-    let editor_w = (width - editor_x - pad).max(260);
-    let list_w = (editor_x - pad * 2).max(260);
+    let list_w = (width - pad * 2).max(260);
     let list_top = 154;
-    let editor_top = 66;
-    let save_y = button_y - 44;
-    let tags_edit_y = save_y - 42;
-    let tags_label_y = tags_edit_y - 24;
-    let content_y = 226;
-    let content_h = (tags_label_y - content_y - 12).max(96);
 
     set_bounds(state.title_label, pad, 18, 220, 32);
     set_bounds(state.hint_label, pad + 234, 24, width - pad * 2 - 234, 24);
@@ -3806,29 +3660,8 @@ fn apply_layout(hwnd: HWND, state: &WindowState) {
     );
     set_bounds(state.list_status_label, pad, 128, list_w, 22);
     set_bounds(state.list, pad, list_top, list_w, button_y - list_top - 12);
-    set_bounds(
-        state.editor_heading_label,
-        editor_x,
-        editor_top,
-        editor_w,
-        28,
-    );
-    set_bounds(
-        state.editor_hint_label,
-        editor_x,
-        editor_top + 30,
-        editor_w,
-        22,
-    );
-    set_bounds(state.title_field_label, editor_x, 132, editor_w, 22);
-    set_bounds(state.title_edit, editor_x, 156, editor_w, 30);
-    set_bounds(state.content_field_label, editor_x, 202, editor_w, 22);
-    set_bounds(state.content_edit, editor_x, content_y, editor_w, content_h);
-    set_bounds(state.tags_field_label, editor_x, tags_label_y, editor_w, 22);
-    set_bounds(state.tags_edit, editor_x, tags_edit_y, editor_w, 30);
-    // 保存编辑是“编辑当前行”的局部动作，取消/确认是窗口级动作。
-    // 分成两行能避免窄窗口下三按钮互相挤压，也让操作层级更清楚。
-    set_bounds(state.save_button, editor_x, save_y, button_w, button_h);
+    // v0.4.4 起规则编辑入口完全收敛到表格单元格，底部只保留窗口级动作。
+    // 这样既避免右侧旧编辑面板挤压按钮，也避免出现两个文本编辑 owner。
     set_bounds(state.cancel_button, cancel_x, button_y, button_w, button_h);
     set_bounds(
         state.confirm_button,

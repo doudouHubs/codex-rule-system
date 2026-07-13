@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.4
+
+- Removed the right-side current-rule editor from the native `rule-check` window.
+- Made the rules table use the full window width, with inline table cells as the only edit surface.
+- Kept `Cancel` and `Save and select` fixed at the bottom of the window.
+
 ## 0.4.3
 
 - Added inline text editing for the `tags`, `title`, and `content preview` cells in the native `rule-check` table.
